@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Environment
+.env
+
+# Runtime configs (contain password hashes, sessions)
+config/users.json
+config/sessions.json
+
+# User file storage (except .gitkeep)
+data/*
+!data/.gitkeep
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Temp uploads
+/tmp/

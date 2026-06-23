@@ -1,0 +1,21 @@
+{
+  "name": "simplecloud2",
+  "version": "1.0.0",
+  "description": "Lightweight file manager on Node.js — no external database",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "create-admin": "node scripts/create-admin.js"
+  },
+  "dependencies": {
+    "cookie-parser": "^1.4.7",
+    "express": "^4.21.0",
+    "multer": "^1.4.5-lts.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  },
+  "author": "",
+  "license": "ISC"
+}
