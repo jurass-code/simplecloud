@@ -1,7 +1,9 @@
-const { createApp } = require('./app');
-const { loadConfig } = require('./config');
+require("dotenv").config();
 
-const DEFAULT_ADMIN_PASSWORD = 'password';
+const { createApp } = require("./app");
+const { loadConfig } = require("./config");
+
+const DEFAULT_ADMIN_PASSWORD = "password";
 
 async function bootstrapAdmin(userStore) {
   if (userStore.hasUsers()) return;
@@ -9,20 +11,20 @@ async function bootstrapAdmin(userStore) {
   const adminPassword = process.env.ADMIN_PASSWORD || DEFAULT_ADMIN_PASSWORD;
 
   userStore.createUser({
-    id: 'admin',
-    username: 'admin',
+    id: "admin",
+    username: "admin",
     password: adminPassword,
-    role: 'admin',
+    role: "admin",
   });
 
-  console.log('-------------------------------------------');
-  console.log('  Admin user created:');
+  console.log("-------------------------------------------");
+  console.log("  Admin user created:");
   console.log(`    username: admin`);
   console.log(`    password: ${adminPassword}`);
   if (!process.env.ADMIN_PASSWORD) {
-    console.log('  Set ADMIN_PASSWORD env var to change this.');
+    console.log("  Set ADMIN_PASSWORD env var to change this.");
   }
-  console.log('-------------------------------------------');
+  console.log("-------------------------------------------");
 }
 
 const config = loadConfig();
