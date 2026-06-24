@@ -1,6 +1,6 @@
 require("dotenv").config();
 
-const { createApp } = require("./app");
+const { createApp } = require("./application");
 const { loadConfig } = require("./config");
 
 const DEFAULT_ADMIN_PASSWORD = "password";

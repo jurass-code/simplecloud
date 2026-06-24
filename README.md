@@ -179,7 +179,7 @@ simplecloud2/
 │   └── app.js
 ├── src/
 │   ├── server.js          # Точка входа + bootstrap админа
-│   ├── app.js             # Express-приложение и роуты
+│   ├── application.js     # Express-приложение и роуты
 │   ├── config.js          # Конфигурация из переменных окружения
 │   ├── auth/              # Авторизация
 │   │   ├── password.js    # pbkdf2 + timingSafeEqual
