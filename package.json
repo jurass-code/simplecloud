@@ -2,7 +2,7 @@
   "name": "simplecloud2",
   "version": "1.0.0",
   "description": "Lightweight file manager on Node.js — no external database",
-  "main": "src/server.js",
+  "main": "app.js",
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
