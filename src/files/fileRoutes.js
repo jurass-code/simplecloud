@@ -11,7 +11,7 @@ function createFileRoutes(fileService, publicStore) {
 
   const upload = multer({
     dest: path.join(os.tmpdir(), "simplecloud-uploads"),
-    limits: { fileSize: fileService.maxUploadBytes },
+    limits: { fileSize: fileService.maxUploadBytes, files: 50 },
     fileFilter(_req, file, cb) {
       if (!isValidName(file.originalname)) {
         cb(
@@ -52,7 +52,7 @@ function createFileRoutes(fileService, publicStore) {
       );
       res.setHeader("Content-Type", "application/octet-stream");
       res.setHeader("Content-Length", size);
-      stream.on("error", () => {
+      stream.on("error", function () {
         if (!res.headersSent) res.status(500).end();
       });
       stream.pipe(res);
@@ -61,24 +61,41 @@ function createFileRoutes(fileService, publicStore) {
 
   router.post(
     "/upload",
-    upload.single("file"),
+    upload.array("files", 50),
     asyncRoute(async (req, res) => {
-      if (!req.file) {
+      if (!req.files || req.files.length === 0) {
         throw new ApiError(
           ErrorCodes.INVALID_REQUEST.code,
-          "No file provided",
+          "No files provided",
           400,
         );
       }
       const overwrite = req.query.overwrite === "true";
       const userPath = req.query.path || "/";
-      const result = await fileService.uploadFromTemp(
-        userPath,
-        req.file.path,
-        req.file.originalname,
-        overwrite,
-      );
-      res.status(201).json(result);
+      const results = [];
+      for (const f of req.files) {
+        try {
+          const r = await fileService.uploadFromTemp(
+            userPath,
+            f.path,
+            f.originalname,
+            overwrite,
+          );
+          results.push({
+            name: r.name,
+            path: r.path,
+            size: r.size,
+            status: "ok",
+          });
+        } catch (err) {
+          results.push({
+            name: f.originalname,
+            status: "error",
+            message: err.message,
+          });
+        }
+      }
+      res.status(201).json({ files: results });
     }),
   );
 
@@ -122,6 +139,31 @@ function createFileRoutes(fileService, publicStore) {
     }),
   );
 
+  // Batch delete — max 50 paths
+  router.post(
+    "/delete-batch",
+    asyncRoute(async (req, res) => {
+      const paths = req.body.paths;
+      if (!Array.isArray(paths) || paths.length === 0 || paths.length > 50) {
+        throw new ApiError(
+          ErrorCodes.INVALID_REQUEST.code,
+          "Paths array must contain 1–50 items",
+          400,
+        );
+      }
+      const results = [];
+      for (const p of paths) {
+        try {
+          await fileService.delete(p);
+          results.push({ path: p, status: "ok" });
+        } catch (err) {
+          results.push({ path: p, status: "error", message: err.message });
+        }
+      }
+      res.json({ deleted: results });
+    }),
+  );
+
   router.post(
     "/move",
     asyncRoute(async (req, res) => {
@@ -138,7 +180,6 @@ function createFileRoutes(fileService, publicStore) {
     }),
   );
 
-  // POST /api/files/publish
   router.post(
     "/publish",
     asyncRoute(async (req, res) => {
@@ -159,15 +200,16 @@ function createFileRoutes(fileService, publicStore) {
       }
       const stat = await fileService.stat(userPath);
       const entry = publicStore.publish(userPath, stat.type);
-      res.status(201).json({
-        path: entry.path,
-        type: entry.type,
-        publicUrl: "/pub" + entry.path,
-      });
+      res
+        .status(201)
+        .json({
+          path: entry.path,
+          type: entry.type,
+          publicUrl: "/pub" + entry.path,
+        });
     }),
   );
 
-  // DELETE /api/files/publish
   router.delete(
     "/publish",
     asyncRoute(async (req, res) => {
@@ -191,12 +233,10 @@ function createFileRoutes(fileService, publicStore) {
     }),
   );
 
-  // GET /api/files/published
   router.get(
     "/published",
     asyncRoute(async (_req, res) => {
-      const items = publicStore.getAll();
-      res.json(items);
+      res.json(publicStore.getAll());
     }),
   );
 

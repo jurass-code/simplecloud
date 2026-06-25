@@ -160,7 +160,7 @@ async function run() {
   var body = Buffer.concat([
     Buffer.from("--" + boundary + "\r\n"),
     Buffer.from(
-      'Content-Disposition: form-data; name="file"; filename="hello.txt"\r\n',
+      'Content-Disposition: form-data; name="files"; filename="hello.txt"\r\n',
     ),
     Buffer.from("Content-Type: text/plain\r\n\r\n"),
     Buffer.from("hello simplecloud"),
@@ -265,7 +265,7 @@ async function run() {
   var pbBody = Buffer.concat([
     Buffer.from("--" + pb + "\r\n"),
     Buffer.from(
-      'Content-Disposition: form-data; name="file"; filename="pub.txt"\r\n',
+      'Content-Disposition: form-data; name="files"; filename="pub.txt"\r\n',
     ),
     Buffer.from("Content-Type: text/plain\r\n\r\n"),
     Buffer.from("pub content"),
@@ -326,7 +326,7 @@ async function run() {
   var nbBody = Buffer.concat([
     Buffer.from("--" + nb + "\r\n"),
     Buffer.from(
-      'Content-Disposition: form-data; name="file"; filename="nested.txt"\r\n',
+      'Content-Disposition: form-data; name="files"; filename="nested.txt"\r\n',
     ),
     Buffer.from("Content-Type: text/plain\r\n\r\n"),
     Buffer.from("nested"),

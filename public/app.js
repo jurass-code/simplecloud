@@ -11,6 +11,7 @@
     listData: null,
     loading: false,
     published: [],
+    selected: {},
   };
 
   var $ = function (sel) {
@@ -22,7 +23,7 @@
   var loginForm = $("#login-form");
   var loginError = $("#login-error");
   var errorBanner = $("#error-banner");
-  var fileList = $("#file-list");
+  var fileTbody = $("#file-list");
   var breadcrumbs = $("#breadcrumbs");
   var loadingState = $("#loading-state");
   var emptyState = $("#empty-state");
@@ -30,8 +31,13 @@
   var prevBtn = $("#prev-page");
   var nextBtn = $("#next-page");
   var currentUser = $("#current-user");
+  var dropZone = $("#drop-zone");
+  var dropOverlay = $("#drop-overlay");
+  var batchBar = $("#batch-bar");
+  var batchCount = $("#batch-count");
+  var selectAll = $("#select-all");
 
-  // ---- API helpers ----
+  // ---- API ----
   async function api(method, url, body) {
     var opts = { method: method, headers: {} };
     if (body && !(body instanceof FormData)) {
@@ -42,14 +48,15 @@
     }
     var res = await fetch(url, opts);
     var data = await res.json();
-    if (!res.ok) throw new Error(data?.error?.message || res.statusText);
+    if (!res.ok)
+      throw new Error(data && data.error ? data.error.message : res.statusText);
     return data;
   }
 
   async function loadPublished() {
     try {
       state.published = await api("GET", "/api/files/published");
-    } catch {
+    } catch (e) {
       state.published = [];
     }
   }
@@ -94,6 +101,7 @@
   function navigateTo(p) {
     state.currentPath = p;
     state.page = 1;
+    clearSelection();
     loadFiles();
   }
 
@@ -103,9 +111,8 @@
     var acc = "";
     for (var i = 0; i < parts.length; i++) {
       acc += "/" + parts[i];
-      html += ' <span class="sep">/</span> ';
       html +=
-        '<a data-path="' +
+        ' <span class="sep">/</span> <a data-path="' +
         escapeAttr(acc) +
         '">' +
         escapeHtml(parts[i]) +
@@ -113,12 +120,95 @@
     }
     breadcrumbs.innerHTML = html;
     breadcrumbs.querySelectorAll("a").forEach(function (a) {
-      a.addEventListener("click", function (e) {
-        e.preventDefault();
+      a.addEventListener("click", function (ev) {
+        ev.preventDefault();
         navigateTo(a.dataset.path);
       });
     });
   }
+
+  // ---- Selection ----
+  function clearSelection() {
+    state.selected = {};
+    selectAll.checked = false;
+    updateBatchBar();
+  }
+
+  function toggleSelect(path) {
+    if (state.selected[path]) delete state.selected[path];
+    else state.selected[path] = true;
+    updateBatchBar();
+    updateSelectAllCheckbox();
+    highlightRows();
+  }
+
+  function updateSelectAllCheckbox() {
+    if (!state.listData || state.listData.items.length === 0) {
+      selectAll.checked = false;
+      return;
+    }
+    selectAll.checked = state.listData.items.every(function (i) {
+      return state.selected[i.path];
+    });
+  }
+
+  function updateBatchBar() {
+    var count = Object.keys(state.selected).length;
+    if (count > 0) {
+      batchBar.classList.remove("hidden");
+      batchCount.textContent = count + " selected";
+    } else {
+      batchBar.classList.add("hidden");
+    }
+  }
+
+  function highlightRows() {
+    fileTbody.querySelectorAll("tr").forEach(function (tr) {
+      var cb = tr.querySelector(".row-checkbox");
+      if (cb && cb.checked) tr.classList.add("selected");
+      else tr.classList.remove("selected");
+    });
+  }
+
+  selectAll.addEventListener("change", function () {
+    if (!state.listData) return;
+    if (selectAll.checked)
+      state.listData.items.forEach(function (i) {
+        state.selected[i.path] = true;
+      });
+    else state.selected = {};
+    fileTbody.querySelectorAll(".row-checkbox").forEach(function (cb) {
+      cb.checked = selectAll.checked;
+    });
+    updateBatchBar();
+    highlightRows();
+  });
+
+  // ---- Batch delete ----
+  $("#batch-delete-btn").addEventListener("click", async function () {
+    var paths = Object.keys(state.selected);
+    if (paths.length === 0) return;
+    if (!confirm("Delete " + paths.length + " item(s)?")) return;
+    try {
+      await api("POST", "/api/files/delete-batch", { paths: paths });
+      clearSelection();
+      hideError();
+      if (
+        state.listData &&
+        state.listData.items.length === paths.length &&
+        state.page > 1
+      )
+        state.page--;
+      loadFiles();
+    } catch (err) {
+      showError(err.message);
+    }
+  });
+
+  $("#batch-clear-btn").addEventListener("click", function () {
+    clearSelection();
+    highlightRows();
+  });
 
   // ---- File loading ----
   async function loadFiles() {
@@ -147,7 +237,7 @@
   }
 
   function renderLoading() {
-    fileList.innerHTML = "";
+    fileTbody.innerHTML = "";
     loadingState.classList.remove("hidden");
     emptyState.classList.add("hidden");
   }
@@ -156,16 +246,17 @@
     loadingState.classList.add("hidden");
     var data = state.listData;
     if (!data || data.items.length === 0) {
-      fileList.innerHTML = "";
+      fileTbody.innerHTML = "";
       emptyState.classList.toggle("hidden", !!state.loading);
     } else {
       emptyState.classList.add("hidden");
     }
     if (!data) return;
 
-    fileList.innerHTML = data.items
+    fileTbody.innerHTML = data.items
       .map(function (item) {
         var pub = isPublished(item.path);
+        var checked = state.selected[item.path] ? " checked" : "";
         var typeIcon =
           item.type === "folder"
             ? '<span class="folder-icon">&#128193;</span>'
@@ -188,7 +279,14 @@
               "</a>";
 
         return (
-          "<tr>" +
+          '<tr class="' +
+          (checked ? "selected" : "") +
+          '">' +
+          '<td class="col-check"><input type="checkbox" class="row-checkbox" data-path="' +
+          escapeAttr(item.path) +
+          '"' +
+          checked +
+          "></td>" +
           "<td>" +
           nameCell +
           "</td>" +
@@ -219,34 +317,38 @@
             : '<button class="btn btn-sm publish-btn" data-path="' +
               escapeAttr(item.path) +
               '">Publish</button>') +
-          "</div></td>" +
-          "</tr>"
+          "</div></td></tr>"
         );
       })
       .join("");
 
-    fileList.querySelectorAll("a[data-path]").forEach(function (a) {
-      a.addEventListener("click", function (e) {
-        e.preventDefault();
+    fileTbody.querySelectorAll(".row-checkbox").forEach(function (cb) {
+      cb.addEventListener("change", function () {
+        toggleSelect(cb.dataset.path);
+      });
+    });
+    fileTbody.querySelectorAll("a[data-path]").forEach(function (a) {
+      a.addEventListener("click", function (ev) {
+        ev.preventDefault();
         navigateTo(a.dataset.path);
       });
     });
-    fileList.querySelectorAll(".rename-btn").forEach(function (btn) {
+    fileTbody.querySelectorAll(".rename-btn").forEach(function (btn) {
       btn.addEventListener("click", function () {
         openRenameModal(btn.dataset.path, btn.dataset.name);
       });
     });
-    fileList.querySelectorAll(".delete-btn").forEach(function (btn) {
+    fileTbody.querySelectorAll(".delete-btn").forEach(function (btn) {
       btn.addEventListener("click", function () {
         openDeleteModal(btn.dataset.path, btn.dataset.name);
       });
     });
-    fileList.querySelectorAll(".publish-btn").forEach(function (btn) {
+    fileTbody.querySelectorAll(".publish-btn").forEach(function (btn) {
       btn.addEventListener("click", function () {
         publishPath(btn.dataset.path);
       });
     });
-    fileList
+    fileTbody
       .querySelectorAll(".pub-link-btn, .pub-badge")
       .forEach(function (el) {
         el.addEventListener("click", function () {
@@ -254,6 +356,7 @@
         });
       });
 
+    updateSelectAllCheckbox();
     renderSortArrows();
     renderPagination();
   }
@@ -279,17 +382,17 @@
       " items)";
   }
 
-  // ---- Sort ----
   document.querySelectorAll(".sortable").forEach(function (th) {
     th.addEventListener("click", function () {
       var field = th.dataset.sort;
-      if (state.sort === field) {
+      if (state.sort === field)
         state.direction = state.direction === "asc" ? "desc" : "asc";
-      } else {
+      else {
         state.sort = field;
         state.direction = "asc";
       }
       state.page = 1;
+      clearSelection();
       loadFiles();
     });
   });
@@ -307,44 +410,156 @@
   prevBtn.addEventListener("click", function () {
     if (state.page > 1) {
       state.page--;
+      clearSelection();
       loadFiles();
     }
   });
   nextBtn.addEventListener("click", function () {
-    var totalPages = Math.ceil((state.listData?.total || 0) / state.pageSize);
+    var totalPages = Math.ceil(
+      ((state.listData && state.listData.total) || 0) / state.pageSize,
+    );
     if (state.page < totalPages) {
       state.page++;
+      clearSelection();
       loadFiles();
     }
   });
 
-  // ---- Upload ----
+  // ---- Upload (click) ----
   var uploadInput = $("#upload-input");
   $("#upload-btn").addEventListener("click", function () {
     uploadInput.click();
   });
-  uploadInput.addEventListener("change", async function () {
-    var files = uploadInput.files;
-    if (!files.length) return;
+  uploadInput.addEventListener("change", function () {
+    doUpload(uploadInput.files);
+  });
+
+  // ---- Drag and drop (scoped to app screen) ----
+  var dragCounter = 0;
+
+  function isAppVisible() {
+    return !appScreen.classList.contains("hidden");
+  }
+  function anyModalOpen() {
+    return (
+      !$("#folder-modal").classList.contains("hidden") ||
+      !$("#rename-modal").classList.contains("hidden") ||
+      !$("#delete-modal").classList.contains("hidden") ||
+      !$("#publish-modal").classList.contains("hidden")
+    );
+  }
+
+  appScreen.addEventListener("dragenter", function (e) {
+    if (!isAppVisible() || anyModalOpen()) return;
+    e.preventDefault();
+    dragCounter++;
+    if (dragCounter === 1) dropOverlay.classList.remove("hidden");
+  });
+  appScreen.addEventListener("dragleave", function (e) {
+    if (!isAppVisible()) return;
+    e.preventDefault();
+    dragCounter--;
+    if (dragCounter === 0) dropOverlay.classList.add("hidden");
+  });
+  appScreen.addEventListener("dragover", function (e) {
+    if (!isAppVisible() || anyModalOpen()) return;
+    e.preventDefault();
+  });
+  appScreen.addEventListener("drop", function (e) {
+    if (!isAppVisible() || anyModalOpen()) return;
+    e.preventDefault();
+    dragCounter = 0;
+    dropOverlay.classList.add("hidden");
+    if (e.dataTransfer.files.length > 0) doUpload(e.dataTransfer.files);
+  });
+
+  async function doUpload(files) {
+    if (!files || files.length === 0) return;
     hideError();
-    for (var i = 0; i < files.length; i++) {
-      try {
-        var fd = new FormData();
-        fd.append("file", files[i]);
-        var res = await fetch(
-          "/api/files/upload?path=" + encodeURIComponent(state.currentPath),
-          { method: "POST", body: fd },
+
+    var progressEl = showUploadProgress(files.length);
+    var fd = new FormData();
+    for (var i = 0; i < files.length; i++) fd.append("files", files[i]);
+
+    try {
+      var res = await fetch(
+        "/api/files/upload?path=" + encodeURIComponent(state.currentPath),
+        { method: "POST", body: fd },
+      );
+      var data = await res.json();
+      if (!res.ok)
+        throw new Error(
+          (data && data.error && data.error.message) || "Upload failed",
         );
-        var data = await res.json();
-        if (!res.ok) throw new Error(data?.error?.message || "Upload failed");
-      } catch (err) {
-        showError("Upload: " + err.message);
-        break;
-      }
+      if (data.files) updateUploadProgress(progressEl, data.files);
+    } catch (err) {
+      showError("Upload: " + err.message);
+      if (progressEl) progressEl.remove();
     }
     uploadInput.value = "";
     loadFiles();
-  });
+  }
+
+  function showUploadProgress(total) {
+    var el = document.createElement("div");
+    el.className = "upload-progress";
+    el.innerHTML =
+      "<h3>Uploading " +
+      total +
+      " file(s)...</h3>" +
+      '<div class="bar"><div class="bar-fill" style="width:0%"></div></div>';
+    document.body.appendChild(el);
+    // Animate bar to 90% over ~30s so it doesn't look frozen
+    setTimeout(function () {
+      var bar = el.querySelector(".bar-fill");
+      if (bar) {
+        bar.style.transition = "width 30s linear";
+        bar.style.width = "90%";
+      }
+    }, 100);
+    return el;
+  }
+
+  function updateUploadProgress(el, files) {
+    var total = files.length;
+    var ok = 0,
+      err = 0;
+    files.forEach(function (f) {
+      if (f.status === "ok") ok++;
+      else err++;
+    });
+    var done = ok + err;
+    var pct = Math.round((done / total) * 100);
+    var bar = el.querySelector(".bar-fill");
+    if (bar) {
+      bar.style.transition = "width 0.3s ease";
+      bar.style.width = pct + "%";
+    }
+
+    var html = "<h3>Uploaded " + done + " of " + total + "</h3>";
+    files.forEach(function (f) {
+      var cls = f.status === "ok" ? "ok" : "err";
+      var icon = f.status === "ok" ? "✓" : "✗";
+      html +=
+        '<div class="file-item"><span>' +
+        icon +
+        " " +
+        escapeHtml(f.name) +
+        '</span><span class="' +
+        cls +
+        '">' +
+        (f.status === "ok" ? formatSize(f.size || 0) : f.message || "error") +
+        "</span></div>";
+    });
+    html +=
+      '<div class="bar"><div class="bar-fill" style="width:' +
+      pct +
+      '%"></div></div>';
+    el.innerHTML = html;
+    setTimeout(function () {
+      el.remove();
+    }, 4000);
+  }
 
   // ---- Create folder modal ----
   var folderModal = $("#folder-modal");
@@ -380,9 +595,9 @@
   // ---- Rename modal ----
   var renameModal = $("#rename-modal");
   var renameInput = $("#rename-input");
-  var renameTargetPath = "";
+  var renameTarget = "";
   function openRenameModal(p, name) {
-    renameTargetPath = p;
+    renameTarget = p;
     renameInput.value = name;
     renameModal.classList.remove("hidden");
     renameInput.focus();
@@ -391,12 +606,12 @@
     renameModal.classList.add("hidden");
   });
   $("#rename-confirm").addEventListener("click", async function () {
-    var newName = renameInput.value.trim();
-    if (!newName) return;
+    var n = renameInput.value.trim();
+    if (!n) return;
     try {
       await api("PATCH", "/api/files/rename", {
-        path: renameTargetPath,
-        newName: newName,
+        path: renameTarget,
+        newName: n,
       });
       renameModal.classList.add("hidden");
       hideError();
@@ -413,9 +628,9 @@
   // ---- Delete modal ----
   var deleteModal = $("#delete-modal");
   var deleteNameEl = $("#delete-name");
-  var deleteTargetPath = "";
+  var deleteTarget = "";
   function openDeleteModal(p, name) {
-    deleteTargetPath = p;
+    deleteTarget = p;
     deleteNameEl.textContent = name;
     deleteModal.classList.remove("hidden");
   }
@@ -426,7 +641,7 @@
     try {
       await api(
         "DELETE",
-        "/api/files?path=" + encodeURIComponent(deleteTargetPath),
+        "/api/files?path=" + encodeURIComponent(deleteTarget),
       );
       deleteModal.classList.add("hidden");
       hideError();
@@ -439,30 +654,29 @@
   });
 
   // ---- Publish ----
-  async function publishPath(userPath) {
+  async function publishPath(p) {
     try {
-      await api("POST", "/api/files/publish", { path: userPath });
+      await api("POST", "/api/files/publish", { path: p });
       await loadPublished();
       renderFiles();
-      openPublishModal(userPath);
+      openPublishModal(p);
     } catch (err) {
       showError(err.message);
     }
   }
 
-  // ---- Publish modal ----
   var publishModal = $("#publish-modal");
   var publishUrlInput = $("#publish-url-input");
   var publishPathEl = $("#publish-path");
   var publishRevokeBtn = $("#publish-revoke-btn");
-  var currentPublishPath = "";
+  var curPubPath = "";
 
-  function openPublishModal(userPath) {
-    currentPublishPath = userPath;
-    publishPathEl.textContent = userPath;
-    var pub = isPublished(userPath);
+  function openPublishModal(p) {
+    curPubPath = p;
+    publishPathEl.textContent = p;
+    var pub = isPublished(p);
     if (pub) {
-      publishUrlInput.value = window.location.origin + "/pub" + userPath;
+      publishUrlInput.value = window.location.origin + "/pub" + p;
       publishRevokeBtn.classList.remove("hidden");
     } else {
       publishUrlInput.value = "(not published)";
@@ -476,7 +690,7 @@
   });
   $("#publish-revoke-btn").addEventListener("click", async function () {
     try {
-      await api("DELETE", "/api/files/publish", { path: currentPublishPath });
+      await api("DELETE", "/api/files/publish", { path: curPubPath });
       publishModal.classList.add("hidden");
       hideError();
       await loadPublished();
@@ -488,9 +702,10 @@
   $("#publish-copy-btn").addEventListener("click", function () {
     publishUrlInput.select();
     document.execCommand("copy");
-    $("#publish-copy-btn").textContent = "Copied!";
+    var b = $("#publish-copy-btn");
+    b.textContent = "Copied!";
     setTimeout(function () {
-      $("#publish-copy-btn").textContent = "Copy";
+      b.textContent = "Copy";
     }, 1500);
   });
 
@@ -499,7 +714,7 @@
     loadFiles();
   });
 
-  // ---- Error display ----
+  // ---- Error ----
   function showError(msg) {
     errorBanner.textContent = msg;
     errorBanner.classList.remove("hidden");
@@ -508,15 +723,13 @@
     errorBanner.classList.add("hidden");
   }
 
-  // ---- Utilities ----
+  // ---- Utils ----
   function formatSize(bytes) {
     if (bytes < 1024) return bytes + " B";
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
-    if (bytes < 1024 * 1024 * 1024)
-      return (bytes / (1024 * 1024)).toFixed(1) + " MB";
-    return (bytes / (1024 * 1024 * 1024)).toFixed(1) + " GB";
+    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + " KB";
+    if (bytes < 1073741824) return (bytes / 1048576).toFixed(1) + " MB";
+    return (bytes / 1073741824).toFixed(1) + " GB";
   }
-
   function formatDate(iso) {
     var d = new Date(iso);
     return (
@@ -529,7 +742,6 @@
       d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })
     );
   }
-
   function escapeHtml(str) {
     var div = document.createElement("div");
     div.textContent = str;
@@ -543,7 +755,7 @@
       .replace(/>/g, "&gt;");
   }
 
-  // ---- Modal backdrop ----
+  // ---- Modals backdrop ----
   document.querySelectorAll(".modal-backdrop").forEach(function (bd) {
     bd.addEventListener("click", function () {
       folderModal.classList.add("hidden");
@@ -553,7 +765,7 @@
     });
   });
 
-  // ---- Screen switching ----
+  // ---- Screens ----
   function showLogin() {
     loginScreen.classList.remove("hidden");
     appScreen.classList.add("hidden");
@@ -571,10 +783,10 @@
   // ---- Init ----
   (async function init() {
     try {
-      var data = await api("GET", "/api/auth/me");
-      state.user = data.user;
+      var d = await api("GET", "/api/auth/me");
+      state.user = d.user;
       showApp();
-    } catch {
+    } catch (e) {
       showLogin();
     }
   })();

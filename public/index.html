@@ -60,12 +60,30 @@
                 </div>
             </div>
 
+            <div id="batch-bar" class="batch-bar hidden">
+                <span id="batch-count"></span>
+                <button id="batch-delete-btn" class="btn btn-danger btn-sm">
+                    Delete selected
+                </button>
+                <button id="batch-clear-btn" class="btn btn-sm">Clear</button>
+            </div>
+
             <div id="error-banner" class="error-banner hidden"></div>
 
-            <div class="file-table-wrapper">
+            <div id="drop-zone" class="file-table-wrapper">
+                <div id="drop-overlay" class="drop-overlay hidden">
+                    <div class="drop-message">Drop files here to upload</div>
+                </div>
                 <table class="file-table">
                     <thead>
                         <tr>
+                            <th class="col-check">
+                                <input
+                                    type="checkbox"
+                                    id="select-all"
+                                    title="Select all"
+                                />
+                            </th>
                             <th class="sortable" data-sort="name">
                                 Name <span class="sort-arrow"></span>
                             </th>
@@ -85,7 +103,9 @@
                 </table>
                 <div id="loading-state" class="loading hidden">Loading...</div>
                 <div id="empty-state" class="empty-state hidden">
-                    This folder is empty.
+                    This folder is empty.<br /><small
+                        >Drag &amp; drop files here to upload.</small
+                    >
                 </div>
             </div>
 
