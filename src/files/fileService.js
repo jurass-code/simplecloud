@@ -1,8 +1,7 @@
-const fs = require('fs');
-const path = require('path');
-const { pipeline } = require('stream/promises');
-const { ApiError, ErrorCodes } = require('../shared/errors');
-const { resolveStoragePath, toUserPath, isValidName } = require('./pathSafety');
+const fs = require("fs");
+const path = require("path");
+const { ApiError, ErrorCodes } = require("../shared/errors");
+const { resolveStoragePath, toUserPath, isValidName } = require("./pathSafety");
 
 class FileService {
   constructor(storageDir, maxUploadBytes) {
@@ -10,23 +9,57 @@ class FileService {
     this.maxUploadBytes = maxUploadBytes;
   }
 
+  // ---------- stat ----------
+
+  async stat(userPath) {
+    const targetPath = resolveStoragePath(userPath, this.storageDir);
+    try {
+      const st = await fs.promises.stat(targetPath);
+      return {
+        type: st.isDirectory() ? "folder" : "file",
+        size: st.size,
+        modifiedAt: st.mtime.toISOString(),
+      };
+    } catch (err) {
+      if (err.code === "ENOENT") {
+        throw new ApiError(
+          ErrorCodes.FILE_NOT_FOUND.code,
+          "Path not found",
+          404,
+        );
+      }
+      throw err;
+    }
+  }
+
   // ---------- list ----------
 
-  async list(userPath, { page = 1, pageSize = 50, sort = 'name', direction = 'asc' } = {}) {
+  async list(
+    userPath,
+    { page = 1, pageSize = 50, sort = "name", direction = "asc" } = {},
+  ) {
     const dirPath = resolveStoragePath(userPath, this.storageDir);
 
     let stat;
     try {
       stat = await fs.promises.stat(dirPath);
     } catch (err) {
-      if (err.code === 'ENOENT') {
-        throw new ApiError(ErrorCodes.FILE_NOT_FOUND.code, 'Directory not found', 404);
+      if (err.code === "ENOENT") {
+        throw new ApiError(
+          ErrorCodes.FILE_NOT_FOUND.code,
+          "Directory not found",
+          404,
+        );
       }
       throw err;
     }
 
     if (!stat.isDirectory()) {
-      throw new ApiError(ErrorCodes.INVALID_REQUEST.code, 'Path is not a directory', 400);
+      throw new ApiError(
+        ErrorCodes.INVALID_REQUEST.code,
+        "Path is not a directory",
+        400,
+      );
     }
 
     const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
@@ -43,32 +76,35 @@ class FileService {
       items.push({
         name: entry.name,
         path: toUserPath(path.join(dirPath, entry.name), this.storageDir),
-        type: entry.isDirectory() ? 'folder' : 'file',
+        type: entry.isDirectory() ? "folder" : "file",
         size: entry.isDirectory() ? 0 : itemStat.size,
         modifiedAt: itemStat.mtime.toISOString(),
       });
     }
 
-    // Sort
-    const dir = direction === 'asc' ? 1 : -1;
+    const dir = direction === "asc" ? 1 : -1;
     items.sort((a, b) => {
-      if (sort === 'name') {
-        if (a.type !== b.type) return a.type === 'folder' ? -dir : dir;
+      if (sort === "name") {
+        if (a.type !== b.type) return a.type === "folder" ? -dir : dir;
         return a.name.localeCompare(b.name) * dir;
       }
-      if (sort === 'size') return (a.size - b.size) * dir;
-      if (sort === 'modifiedAt') return (new Date(a.modifiedAt) - new Date(b.modifiedAt)) * dir;
-      if (sort === 'type') return a.type.localeCompare(b.type) * dir;
+      if (sort === "size") return (a.size - b.size) * dir;
+      if (sort === "modifiedAt")
+        return (new Date(a.modifiedAt) - new Date(b.modifiedAt)) * dir;
+      if (sort === "type") return a.type.localeCompare(b.type) * dir;
       return 0;
     });
 
     const safePage = Math.max(1, parseInt(page, 10) || 1);
-    const safePageSize = Math.min(200, Math.max(10, parseInt(pageSize, 10) || 50));
+    const safePageSize = Math.min(
+      200,
+      Math.max(10, parseInt(pageSize, 10) || 50),
+    );
     const total = items.length;
     const start = (safePage - 1) * safePageSize;
 
     return {
-      path: userPath || '/',
+      path: userPath || "/",
       page: safePage,
       pageSize: safePageSize,
       total,
@@ -85,14 +121,22 @@ class FileService {
     try {
       stat = await fs.promises.stat(filePath);
     } catch (err) {
-      if (err.code === 'ENOENT') {
-        throw new ApiError(ErrorCodes.FILE_NOT_FOUND.code, 'File not found', 404);
+      if (err.code === "ENOENT") {
+        throw new ApiError(
+          ErrorCodes.FILE_NOT_FOUND.code,
+          "File not found",
+          404,
+        );
       }
       throw err;
     }
 
     if (!stat.isFile()) {
-      throw new ApiError(ErrorCodes.INVALID_REQUEST.code, 'Path is not a file', 400);
+      throw new ApiError(
+        ErrorCodes.INVALID_REQUEST.code,
+        "Path is not a file",
+        400,
+      );
     }
 
     return {
@@ -106,7 +150,11 @@ class FileService {
 
   async createFolder(userPath, name) {
     if (!isValidName(name)) {
-      throw new ApiError(ErrorCodes.INVALID_REQUEST.code, 'Invalid folder name', 400);
+      throw new ApiError(
+        ErrorCodes.INVALID_REQUEST.code,
+        "Invalid folder name",
+        400,
+      );
     }
 
     const parentPath = resolveStoragePath(userPath, this.storageDir);
@@ -114,11 +162,19 @@ class FileService {
     try {
       const s = await fs.promises.stat(parentPath);
       if (!s.isDirectory()) {
-        throw new ApiError(ErrorCodes.INVALID_REQUEST.code, 'Parent path is not a directory', 400);
+        throw new ApiError(
+          ErrorCodes.INVALID_REQUEST.code,
+          "Parent path is not a directory",
+          400,
+        );
       }
     } catch (err) {
-      if (err.code === 'ENOENT') {
-        throw new ApiError(ErrorCodes.FILE_NOT_FOUND.code, 'Parent directory not found', 404);
+      if (err.code === "ENOENT") {
+        throw new ApiError(
+          ErrorCodes.FILE_NOT_FOUND.code,
+          "Parent directory not found",
+          404,
+        );
       }
       throw err;
     }
@@ -127,49 +183,77 @@ class FileService {
     try {
       await fs.promises.mkdir(folderPath);
     } catch (err) {
-      if (err.code === 'EEXIST') {
-        throw new ApiError(ErrorCodes.ALREADY_EXISTS.code, 'Folder already exists', 409);
+      if (err.code === "EEXIST") {
+        throw new ApiError(
+          ErrorCodes.ALREADY_EXISTS.code,
+          "Folder already exists",
+          409,
+        );
       }
       throw err;
     }
 
-    return { name, path: toUserPath(folderPath, this.storageDir), type: 'folder' };
+    return {
+      name,
+      path: toUserPath(folderPath, this.storageDir),
+      type: "folder",
+    };
   }
 
   // ---------- rename ----------
 
   async rename(userPath, newName) {
     if (!isValidName(newName)) {
-      throw new ApiError(ErrorCodes.INVALID_REQUEST.code, 'Invalid name', 400);
+      throw new ApiError(ErrorCodes.INVALID_REQUEST.code, "Invalid name", 400);
     }
 
     const oldPath = resolveStoragePath(userPath, this.storageDir);
     const root = path.resolve(this.storageDir);
     if (oldPath === root) {
-      throw new ApiError(ErrorCodes.FORBIDDEN_PATH.code, 'Cannot rename root', 403);
+      throw new ApiError(
+        ErrorCodes.FORBIDDEN_PATH.code,
+        "Cannot rename root",
+        403,
+      );
     }
 
     try {
       await fs.promises.access(oldPath);
     } catch {
-      throw new ApiError(ErrorCodes.FILE_NOT_FOUND.code, 'File or folder not found', 404);
+      throw new ApiError(
+        ErrorCodes.FILE_NOT_FOUND.code,
+        "File or folder not found",
+        404,
+      );
     }
 
     const newPath = path.join(path.dirname(oldPath), newName);
     if (newPath !== root && !newPath.startsWith(root + path.sep)) {
-      throw new ApiError(ErrorCodes.FORBIDDEN_PATH.code, 'New path is outside storage', 403);
+      throw new ApiError(
+        ErrorCodes.FORBIDDEN_PATH.code,
+        "New path is outside storage",
+        403,
+      );
     }
 
     try {
       await fs.promises.rename(oldPath, newPath);
     } catch (err) {
-      if (err.code === 'EEXIST') {
-        throw new ApiError(ErrorCodes.ALREADY_EXISTS.code, 'Name already exists', 409);
+      if (err.code === "EEXIST") {
+        throw new ApiError(
+          ErrorCodes.ALREADY_EXISTS.code,
+          "Name already exists",
+          409,
+        );
       }
       throw err;
     }
 
-    return { oldPath: userPath, newPath: toUserPath(newPath, this.storageDir), newName };
+    return {
+      oldPath: userPath,
+      newPath: toUserPath(newPath, this.storageDir),
+      newName,
+    };
   }
 
   // ---------- delete ----------
@@ -178,15 +262,23 @@ class FileService {
     const targetPath = resolveStoragePath(userPath, this.storageDir);
     const root = path.resolve(this.storageDir);
     if (targetPath === root) {
-      throw new ApiError(ErrorCodes.FORBIDDEN_PATH.code, 'Cannot delete root', 403);
+      throw new ApiError(
+        ErrorCodes.FORBIDDEN_PATH.code,
+        "Cannot delete root",
+        403,
+      );
     }
 
     let stat;
     try {
       stat = await fs.promises.stat(targetPath);
     } catch (err) {
-      if (err.code === 'ENOENT') {
-        throw new ApiError(ErrorCodes.FILE_NOT_FOUND.code, 'File or folder not found', 404);
+      if (err.code === "ENOENT") {
+        throw new ApiError(
+          ErrorCodes.FILE_NOT_FOUND.code,
+          "File or folder not found",
+          404,
+        );
       }
       throw err;
     }
@@ -204,7 +296,11 @@ class FileService {
 
   async uploadFromTemp(userPath, tempPath, filename, overwrite = false) {
     if (!isValidName(filename)) {
-      throw new ApiError(ErrorCodes.INVALID_REQUEST.code, 'Invalid file name', 400);
+      throw new ApiError(
+        ErrorCodes.INVALID_REQUEST.code,
+        "Invalid file name",
+        400,
+      );
     }
 
     const dirPath = resolveStoragePath(userPath, this.storageDir);
@@ -212,11 +308,19 @@ class FileService {
     try {
       const s = await fs.promises.stat(dirPath);
       if (!s.isDirectory()) {
-        throw new ApiError(ErrorCodes.INVALID_REQUEST.code, 'Target is not a directory', 400);
+        throw new ApiError(
+          ErrorCodes.INVALID_REQUEST.code,
+          "Target is not a directory",
+          400,
+        );
       }
     } catch (err) {
-      if (err.code === 'ENOENT') {
-        throw new ApiError(ErrorCodes.FILE_NOT_FOUND.code, 'Target directory not found', 404);
+      if (err.code === "ENOENT") {
+        throw new ApiError(
+          ErrorCodes.FILE_NOT_FOUND.code,
+          "Target directory not found",
+          404,
+        );
       }
       throw err;
     }
@@ -226,16 +330,17 @@ class FileService {
     try {
       await fs.promises.access(destPath);
       if (!overwrite) {
-        // Clean up temp file
         await fs.promises.unlink(tempPath).catch(() => {});
-        throw new ApiError(ErrorCodes.ALREADY_EXISTS.code, 'File already exists. Use overwrite=true', 409);
+        throw new ApiError(
+          ErrorCodes.ALREADY_EXISTS.code,
+          "File already exists. Use overwrite=true",
+          409,
+        );
       }
     } catch (err) {
       if (err instanceof ApiError) throw err;
-      // File doesn't exist — proceed
     }
 
-    // Copy temp file to destination then remove temp
     try {
       await fs.promises.copyFile(tempPath, destPath);
       await fs.promises.unlink(tempPath);
@@ -249,7 +354,7 @@ class FileService {
     return {
       name: filename,
       path: toUserPath(destPath, this.storageDir),
-      type: 'file',
+      type: "file",
       size: finalStat.size,
     };
   }
@@ -262,24 +367,40 @@ class FileService {
     const root = path.resolve(this.storageDir);
 
     if (srcAbs === root) {
-      throw new ApiError(ErrorCodes.FORBIDDEN_PATH.code, 'Cannot move root', 403);
+      throw new ApiError(
+        ErrorCodes.FORBIDDEN_PATH.code,
+        "Cannot move root",
+        403,
+      );
     }
 
     try {
       await fs.promises.access(srcAbs);
     } catch {
-      throw new ApiError(ErrorCodes.FILE_NOT_FOUND.code, 'Source not found', 404);
+      throw new ApiError(
+        ErrorCodes.FILE_NOT_FOUND.code,
+        "Source not found",
+        404,
+      );
     }
 
     const dstParent = path.dirname(dstAbs);
     try {
       const s = await fs.promises.stat(dstParent);
       if (!s.isDirectory()) {
-        throw new ApiError(ErrorCodes.INVALID_REQUEST.code, 'Destination parent is not a directory', 400);
+        throw new ApiError(
+          ErrorCodes.INVALID_REQUEST.code,
+          "Destination parent is not a directory",
+          400,
+        );
       }
     } catch (err) {
-      if (err.code === 'ENOENT') {
-        throw new ApiError(ErrorCodes.FILE_NOT_FOUND.code, 'Destination directory not found', 404);
+      if (err.code === "ENOENT") {
+        throw new ApiError(
+          ErrorCodes.FILE_NOT_FOUND.code,
+          "Destination directory not found",
+          404,
+        );
       }
       throw err;
     }
@@ -287,8 +408,12 @@ class FileService {
     try {
       await fs.promises.rename(srcAbs, dstAbs);
     } catch (err) {
-      if (err.code === 'EEXIST') {
-        throw new ApiError(ErrorCodes.ALREADY_EXISTS.code, 'File already exists at destination', 409);
+      if (err.code === "EEXIST") {
+        throw new ApiError(
+          ErrorCodes.ALREADY_EXISTS.code,
+          "File already exists at destination",
+          409,
+        );
       }
       throw err;
     }

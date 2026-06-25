@@ -75,13 +75,28 @@ npm run create-admin -- myuser mypassword admin
 | `DELETE` | `/api/files` | `?path=` | Удалить файл или папку |
 | `POST` | `/api/files/move` | `{"sourcePath":"/a","destPath":"/b"}` | Переместить |
 
+### Public links
+
+| Метод | Endpoint | Параметры | Описание |
+|--------|----------|-----------|----------|
+| `POST` | `/api/files/publish` | `{"path":"/file.pdf"}` | Опубликовать — возвращает `publicUrl` |
+| `DELETE` | `/api/files/publish` | `{"path":"/file.pdf"}` | Отозвать публичный доступ |
+| `GET` | `/api/files/published` | — | Список всех опубликованных ссылок |
+
+**Публичный доступ (без авторизации):**
+
+| Метод | Endpoint | Описание |
+|--------|----------|----------|
+| `GET` | `/pub/*` | Файл — скачать, папка — HTML-листинг |
+| `GET` | `/pub/*/...` | Доступ к файлам внутри опубликованной папки |
+
 ### Параметры списка файлов
 
 | Параметр | По умолчанию | Ограничения |
 |----------|-------------|-------------|
 | `path` | `/` | Путь к папке |
-| `page` | `1` | ≥ 1 |
-| `pageSize` | `50` | 10–200 |
+| `page` | `1` | >= 1 |
+| `pageSize` | `50` | 10-200 |
 | `sort` | `name` | `name`, `size`, `modifiedAt`, `type` |
 | `direction` | `asc` | `asc`, `desc` |
 
@@ -153,6 +168,19 @@ curl -b cookies.txt -X POST 'http://localhost:3000/api/files/upload?path=/docs' 
 curl -b cookies.txt 'http://localhost:3000/api/files/download?path=/docs/report.pdf' \
   -o report.pdf
 
+# Опубликовать файл (получить публичную ссылку)
+curl -b cookies.txt -X POST http://localhost:3000/api/files/publish \
+  -H 'Content-Type: application/json' \
+  -d '{"path":"/docs/report.pdf"}'
+
+# Скачать по публичной ссылке (без авторизации)
+curl http://localhost:3000/pub/docs/report.pdf
+
+# Отозвать публичный доступ
+curl -b cookies.txt -X DELETE http://localhost:3000/api/files/publish \
+  -H 'Content-Type: application/json' \
+  -d '{"path":"/docs/report.pdf"}'
+
 # Переименовать
 curl -b cookies.txt -X PATCH http://localhost:3000/api/files/rename \
   -H 'Content-Type: application/json' \
@@ -169,34 +197,36 @@ curl -b cookies.txt -X POST http://localhost:3000/api/auth/logout
 
 ```
 simplecloud2/
-├── .env.example           # Пример переменных окружения
+├── app.js                  # Passenger entry point
+├── .env.example            # Пример переменных окружения
 ├── package.json
-├── data/                  # Файловое хранилище (STORAGE_DIR)
-├── config/                # JSON-конфиги: users.json, sessions.json
-├── public/                # Статический frontend
+├── data/                   # Файловое хранилище (STORAGE_DIR)
+├── config/                 # JSON-конфиги: users.json, sessions.json, public.json
+├── public/                 # Статический frontend
 │   ├── index.html
 │   ├── app.css
 │   └── app.js
 ├── src/
-│   ├── server.js          # Точка входа + bootstrap админа
-│   ├── application.js     # Express-приложение и роуты
-│   ├── config.js          # Конфигурация из переменных окружения
-│   ├── auth/              # Авторизация
-│   │   ├── password.js    # pbkdf2 + timingSafeEqual
-│   │   ├── sessions.js    # JSON-хранилище сессий
-│   │   ├── userStore.js   # JSON-хранилище пользователей
+│   ├── server.js           # Точка входа + bootstrap админа
+│   ├── application.js      # Express-приложение и роуты
+│   ├── config.js           # Конфигурация из переменных окружения
+│   ├── auth/               # Авторизация
+│   │   ├── password.js     # pbkdf2 + timingSafeEqual
+│   │   ├── sessions.js     # JSON-хранилище сессий
+│   │   ├── userStore.js    # JSON-хранилище пользователей
 │   │   └── authMiddleware.js
-│   ├── files/             # Файловые операции
-│   │   ├── pathSafety.js  # Защита от path traversal
-│   │   ├── fileService.js # Бизнес-логика
-│   │   └── fileRoutes.js  # HTTP-роуты + multer
-│   └── shared/            # Утилиты
-│       ├── errors.js      # ApiError + error handler
-│       └── asyncRoute.js  # Обёртка для async-обработчиков
+│   ├── files/              # Файловые операции
+│   │   ├── pathSafety.js   # Защита от path traversal
+│   │   ├── fileService.js  # Бизнес-логика
+│   │   ├── fileRoutes.js   # HTTP-роуты + multer + publish
+│   │   └── publicStore.js  # Хранилище публичных ссылок
+│   └── shared/             # Утилиты
+│       ├── errors.js       # ApiError + error handler
+│       └── asyncRoute.js   # Обёртка для async-обработчиков
 ├── scripts/
-│   └── create-admin.js    # CLI создание пользователя
+│   └── create-admin.js     # CLI создание пользователя
 └── test/
-    └── integration.js     # Интеграционные тесты (33 шт.)
+    └── integration.js      # Интеграционные тесты (33 шт.)
 ```
 
 ## Безопасность
@@ -207,8 +237,9 @@ simplecloud2/
 - Upload ограничен по размеру (`MAX_UPLOAD_MB`)
 - Нельзя удалить или переименовать корень хранилища
 - Ошибки не раскрывают абсолютные пути сервера
-- JSON-конфиги записываются атомарно (tmp → rename)
+- JSON-конфиги записываются атомарно (tmp -> rename)
 - Сессии очищаются от просроченных при старте
+- Публичные ссылки: случайный токен (24 hex), недоступны без явной публикации
 
 ## Ограничения
 

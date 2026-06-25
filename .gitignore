@@ -4,9 +4,10 @@ node_modules/
 # Environment
 .env
 
-# Runtime configs (contain password hashes, sessions)
+# Runtime configs (contain password hashes, sessions, public links)
 config/users.json
 config/sessions.json
+config/public.json
 
 # User file storage (except .gitkeep)
 data/*
