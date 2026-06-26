@@ -31,7 +31,6 @@
   var prevBtn = $("#prev-page");
   var nextBtn = $("#next-page");
   var currentUser = $("#current-user");
-  var dropZone = $("#drop-zone");
   var dropOverlay = $("#drop-overlay");
   var batchBar = $("#batch-bar");
   var batchCount = $("#batch-count");
@@ -133,7 +132,6 @@
     selectAll.checked = false;
     updateBatchBar();
   }
-
   function toggleSelect(path) {
     if (state.selected[path]) delete state.selected[path];
     else state.selected[path] = true;
@@ -141,7 +139,6 @@
     updateSelectAllCheckbox();
     highlightRows();
   }
-
   function updateSelectAllCheckbox() {
     if (!state.listData || state.listData.items.length === 0) {
       selectAll.checked = false;
@@ -151,17 +148,13 @@
       return state.selected[i.path];
     });
   }
-
   function updateBatchBar() {
     var count = Object.keys(state.selected).length;
     if (count > 0) {
       batchBar.classList.remove("hidden");
       batchCount.textContent = count + " selected";
-    } else {
-      batchBar.classList.add("hidden");
-    }
+    } else batchBar.classList.add("hidden");
   }
-
   function highlightRows() {
     fileTbody.querySelectorAll("tr").forEach(function (tr) {
       var cb = tr.querySelector(".row-checkbox");
@@ -204,7 +197,6 @@
       showError(err.message);
     }
   });
-
   $("#batch-clear-btn").addEventListener("click", function () {
     clearSelection();
     highlightRows();
@@ -282,24 +274,24 @@
           '<tr class="' +
           (checked ? "selected" : "") +
           '">' +
-          '<td class="col-check"><input type="checkbox" class="row-checkbox" data-path="' +
+          '<td class="col-check" data-label=""><input type="checkbox" class="row-checkbox" data-path="' +
           escapeAttr(item.path) +
           '"' +
           checked +
           "></td>" +
-          "<td>" +
+          '<td data-label="Name">' +
           nameCell +
           "</td>" +
-          "<td>" +
+          '<td data-label="Type">' +
           item.type +
           "</td>" +
-          '<td class="file-size">' +
+          '<td class="file-size" data-label="Size">' +
           (item.type === "folder" ? "—" : formatSize(item.size)) +
           "</td>" +
-          '<td class="file-date">' +
+          '<td class="file-date" data-label="Modified">' +
           formatDate(item.modifiedAt) +
           "</td>" +
-          '<td><div class="row-actions">' +
+          '<td data-label="Actions"><div class="row-actions">' +
           '<button class="btn btn-sm rename-btn" data-path="' +
           escapeAttr(item.path) +
           '" data-name="' +
@@ -405,9 +397,22 @@
       'th[data-sort="' + state.sort + '"] .sort-arrow',
     );
     if (active) active.classList.add(state.direction);
-  }
+    }
 
-  prevBtn.addEventListener("click", function () {
+    // Mobile sort dropdown
+    var mobileSort = $('#mobile-sort');
+    if (mobileSort) {
+      mobileSort.addEventListener('change', function () {
+        var parts = mobileSort.value.split('-');
+        state.sort = parts[0];
+        state.direction = parts[1];
+        state.page = 1;
+        clearSelection();
+        loadFiles();
+      });
+    }
+
+    prevBtn.addEventListener("click", function () {
     if (state.page > 1) {
       state.page--;
       clearSelection();
@@ -425,7 +430,7 @@
     }
   });
 
-  // ---- Upload (click) ----
+  // ---- Upload ----
   var uploadInput = $("#upload-input");
   $("#upload-btn").addEventListener("click", function () {
     uploadInput.click();
@@ -434,9 +439,8 @@
     doUpload(uploadInput.files);
   });
 
-  // ---- Drag and drop (scoped to app screen) ----
+  // ---- Drag and drop ----
   var dragCounter = 0;
-
   function isAppVisible() {
     return !appScreen.classList.contains("hidden");
   }
@@ -476,11 +480,9 @@
   async function doUpload(files) {
     if (!files || files.length === 0) return;
     hideError();
-
     var progressEl = showUploadProgress(files.length);
     var fd = new FormData();
     for (var i = 0; i < files.length; i++) fd.append("files", files[i]);
-
     try {
       var res = await fetch(
         "/api/files/upload?path=" + encodeURIComponent(state.currentPath),
@@ -506,10 +508,8 @@
     el.innerHTML =
       "<h3>Uploading " +
       total +
-      " file(s)...</h3>" +
-      '<div class="bar"><div class="bar-fill" style="width:0%"></div></div>';
+      ' file(s)...</h3><div class="bar"><div class="bar-fill" style="width:0%"></div></div>';
     document.body.appendChild(el);
-    // Animate bar to 90% over ~30s so it doesn't look frozen
     setTimeout(function () {
       var bar = el.querySelector(".bar-fill");
       if (bar) {
@@ -528,18 +528,16 @@
       if (f.status === "ok") ok++;
       else err++;
     });
-    var done = ok + err;
-    var pct = Math.round((done / total) * 100);
+    var pct = Math.round(((ok + err) / total) * 100);
     var bar = el.querySelector(".bar-fill");
     if (bar) {
       bar.style.transition = "width 0.3s ease";
       bar.style.width = pct + "%";
     }
-
-    var html = "<h3>Uploaded " + done + " of " + total + "</h3>";
+    var html = "<h3>Uploaded " + (ok + err) + " of " + total + "</h3>";
     files.forEach(function (f) {
-      var cls = f.status === "ok" ? "ok" : "err";
-      var icon = f.status === "ok" ? "✓" : "✗";
+      var cls = f.status === "ok" ? "ok" : "err",
+        icon = f.status === "ok" ? "✓" : "✗";
       html +=
         '<div class="file-item"><span>' +
         icon +
@@ -561,9 +559,9 @@
     }, 4000);
   }
 
-  // ---- Create folder modal ----
-  var folderModal = $("#folder-modal");
-  var folderInput = $("#folder-name-input");
+  // ---- Modals ----
+  var folderModal = $("#folder-modal"),
+    folderInput = $("#folder-name-input");
   $("#create-folder-btn").addEventListener("click", function () {
     folderModal.classList.remove("hidden");
     folderInput.value = "";
@@ -573,12 +571,12 @@
     folderModal.classList.add("hidden");
   });
   $("#folder-confirm").addEventListener("click", async function () {
-    var name = folderInput.value.trim();
-    if (!name) return;
+    var n = folderInput.value.trim();
+    if (!n) return;
     try {
       await api("POST", "/api/files/folder", {
         path: state.currentPath,
-        name: name,
+        name: n,
       });
       folderModal.classList.add("hidden");
       hideError();
@@ -592,10 +590,9 @@
     if (e.key === "Escape") folderModal.classList.add("hidden");
   });
 
-  // ---- Rename modal ----
-  var renameModal = $("#rename-modal");
-  var renameInput = $("#rename-input");
-  var renameTarget = "";
+  var renameModal = $("#rename-modal"),
+    renameInput = $("#rename-input"),
+    renameTarget = "";
   function openRenameModal(p, name) {
     renameTarget = p;
     renameInput.value = name;
@@ -625,10 +622,9 @@
     if (e.key === "Escape") renameModal.classList.add("hidden");
   });
 
-  // ---- Delete modal ----
-  var deleteModal = $("#delete-modal");
-  var deleteNameEl = $("#delete-name");
-  var deleteTarget = "";
+  var deleteModal = $("#delete-modal"),
+    deleteNameEl = $("#delete-name"),
+    deleteTarget = "";
   function openDeleteModal(p, name) {
     deleteTarget = p;
     deleteNameEl.textContent = name;
@@ -653,7 +649,6 @@
     }
   });
 
-  // ---- Publish ----
   async function publishPath(p) {
     try {
       await api("POST", "/api/files/publish", { path: p });
@@ -665,12 +660,11 @@
     }
   }
 
-  var publishModal = $("#publish-modal");
-  var publishUrlInput = $("#publish-url-input");
-  var publishPathEl = $("#publish-path");
-  var publishRevokeBtn = $("#publish-revoke-btn");
-  var curPubPath = "";
-
+  var publishModal = $("#publish-modal"),
+    publishUrlInput = $("#publish-url-input"),
+    publishPathEl = $("#publish-path");
+  var publishRevokeBtn = $("#publish-revoke-btn"),
+    curPubPath = "";
   function openPublishModal(p) {
     curPubPath = p;
     publishPathEl.textContent = p;
@@ -684,7 +678,6 @@
     }
     publishModal.classList.remove("hidden");
   }
-
   $("#publish-close").addEventListener("click", function () {
     publishModal.classList.add("hidden");
   });
@@ -709,12 +702,10 @@
     }, 1500);
   });
 
-  // ---- Refresh ----
   $("#refresh-btn").addEventListener("click", function () {
     loadFiles();
   });
 
-  // ---- Error ----
   function showError(msg) {
     errorBanner.textContent = msg;
     errorBanner.classList.remove("hidden");
@@ -723,7 +714,6 @@
     errorBanner.classList.add("hidden");
   }
 
-  // ---- Utils ----
   function formatSize(bytes) {
     if (bytes < 1024) return bytes + " B";
     if (bytes < 1048576) return (bytes / 1024).toFixed(1) + " KB";
@@ -755,7 +745,6 @@
       .replace(/>/g, "&gt;");
   }
 
-  // ---- Modals backdrop ----
   document.querySelectorAll(".modal-backdrop").forEach(function (bd) {
     bd.addEventListener("click", function () {
       folderModal.classList.add("hidden");
@@ -765,7 +754,6 @@
     });
   });
 
-  // ---- Screens ----
   function showLogin() {
     loginScreen.classList.remove("hidden");
     appScreen.classList.add("hidden");
@@ -780,7 +768,6 @@
     await loadFiles();
   }
 
-  // ---- Init ----
   (async function init() {
     try {
       var d = await api("GET", "/api/auth/me");

@@ -3,13 +3,16 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>SimpleCloud</title>
+        <title>simplecloud</title>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
         <link rel="stylesheet" href="/app.css" />
     </head>
     <body>
         <div id="login-screen" class="screen">
             <div class="login-card">
-                <h1>SimpleCloud</h1>
+                <h1>simplecloud</h1>
                 <form id="login-form">
                     <label
                         ><span>Username</span
@@ -29,14 +32,14 @@
                             required
                     /></label>
                     <div id="login-error" class="error-banner hidden"></div>
-                    <button type="submit" id="login-btn">Sign in</button>
+                    <button type="submit" id="login-btn" class="btn btn-primary btn-full">Sign in</button>
                 </form>
             </div>
         </div>
 
         <div id="app-screen" class="screen hidden">
             <header class="app-header">
-                <h1 class="app-title">SimpleCloud</h1>
+                <h1 class="app-title">simplecloud</h1>
                 <div class="header-right">
                     <span id="current-user"></span>
                     <button id="logout-btn" class="btn btn-outline">
@@ -55,10 +58,17 @@
                         New Folder
                     </button>
                     <button id="refresh-btn" class="btn" title="Refresh">
-                        &#x21bb;
-                    </button>
-                </div>
-            </div>
+                                            &#x21bb;
+                                        </button>
+                                    </div>
+                                    <select id="mobile-sort" class="mobile-sort">
+                                        <option value="name-asc">Name ↑</option>
+                                        <option value="name-desc">Name ↓</option>
+                                        <option value="type-asc">Type ↑</option>
+                                        <option value="size-desc">Size ↓</option>
+                                        <option value="modifiedAt-desc">Date ↓</option>
+                                    </select>
+                                </div>
 
             <div id="batch-bar" class="batch-bar hidden">
                 <span id="batch-count"></span>
@@ -74,33 +84,35 @@
                 <div id="drop-overlay" class="drop-overlay hidden">
                     <div class="drop-message">Drop files here to upload</div>
                 </div>
-                <table class="file-table">
-                    <thead>
-                        <tr>
-                            <th class="col-check">
-                                <input
-                                    type="checkbox"
-                                    id="select-all"
-                                    title="Select all"
-                                />
-                            </th>
-                            <th class="sortable" data-sort="name">
-                                Name <span class="sort-arrow"></span>
-                            </th>
-                            <th class="sortable" data-sort="type">
-                                Type <span class="sort-arrow"></span>
-                            </th>
-                            <th class="sortable" data-sort="size">
-                                Size <span class="sort-arrow"></span>
-                            </th>
-                            <th class="sortable" data-sort="modifiedAt">
-                                Modified <span class="sort-arrow"></span>
-                            </th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody id="file-list"></tbody>
-                </table>
+                <div class="table-scroll">
+                    <table class="file-table">
+                        <thead>
+                            <tr>
+                                <th class="col-check">
+                                    <input
+                                        type="checkbox"
+                                        id="select-all"
+                                        title="Select all"
+                                    />
+                                </th>
+                                <th class="sortable" data-sort="name">
+                                    Name <span class="sort-arrow"></span>
+                                </th>
+                                <th class="sortable" data-sort="type">
+                                    Type <span class="sort-arrow"></span>
+                                </th>
+                                <th class="sortable" data-sort="size">
+                                    Size <span class="sort-arrow"></span>
+                                </th>
+                                <th class="sortable" data-sort="modifiedAt">
+                                    Modified <span class="sort-arrow"></span>
+                                </th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="file-list"></tbody>
+                    </table>
+                </div>
                 <div id="loading-state" class="loading hidden">Loading...</div>
                 <div id="empty-state" class="empty-state hidden">
                     This folder is empty.<br /><small
