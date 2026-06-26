@@ -1,208 +1,181 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-    <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>simplecloud</title>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-        <link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-        <link rel="stylesheet" href="/app.css" />
-    </head>
-    <body>
-        <div id="login-screen" class="screen">
-            <div class="login-card">
-                <h1>simplecloud</h1>
-                <form id="login-form">
-                    <label
-                        ><span>Username</span
-                        ><input
-                            type="text"
-                            name="username"
-                            autocomplete="username"
-                            required
-                            autofocus
-                    /></label>
-                    <label
-                        ><span>Password</span
-                        ><input
-                            type="password"
-                            name="password"
-                            autocomplete="current-password"
-                            required
-                    /></label>
-                    <div id="login-error" class="error-banner hidden"></div>
-                    <button type="submit" id="login-btn" class="btn btn-primary btn-full">Sign in</button>
-                </form>
-            </div>
-        </div>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>simplecloud</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
 
-        <div id="app-screen" class="screen hidden">
-            <header class="app-header">
-                <h1 class="app-title">simplecloud</h1>
-                <div class="header-right">
-                    <span id="current-user"></span>
-                    <button id="logout-btn" class="btn btn-outline">
-                        Logout
-                    </button>
-                </div>
-            </header>
+<!-- Login -->
+<div id="login-screen" class="screen">
+  <div class="login-card">
+    <h1>simplecloud</h1>
+    <form id="login-form">
+      <label><span>Username</span><input type="text" name="username" autocomplete="username" required autofocus></label>
+      <label><span>Password</span><input type="password" name="password" autocomplete="current-password" required></label>
+      <div id="login-error" class="error-banner hidden"></div>
+      <button type="submit" id="login-btn" class="btn btn-primary btn-full">Sign in</button>
+    </form>
+  </div>
+</div>
 
-            <div class="toolbar">
-                <div class="breadcrumbs" id="breadcrumbs"></div>
-                <div class="toolbar-actions">
-                    <button id="upload-btn" class="btn btn-primary">
-                        Upload
-                    </button>
-                    <button id="create-folder-btn" class="btn">
-                        New Folder
-                    </button>
-                    <button id="refresh-btn" class="btn" title="Refresh">
-                                            &#x21bb;
-                                        </button>
-                                    </div>
-                                    <select id="mobile-sort" class="mobile-sort">
-                                        <option value="name-asc">Name ↑</option>
-                                        <option value="name-desc">Name ↓</option>
-                                        <option value="type-asc">Type ↑</option>
-                                        <option value="size-desc">Size ↓</option>
-                                        <option value="modifiedAt-desc">Date ↓</option>
-                                    </select>
-                                </div>
+<!-- Files -->
+<div id="app-screen" class="screen hidden">
+  <header class="app-header">
+    <h1 class="app-title">simplecloud</h1>
+    <div class="header-right">
+          <span id="current-user"></span>
+          <button id="admin-btn" class="btn btn-outline hidden">Settings</button>
+          <button id="logout-btn" class="btn btn-outline">Logout</button>
+    </div>
+  </header>
 
-            <div id="batch-bar" class="batch-bar hidden">
-                <span id="batch-count"></span>
-                <button id="batch-delete-btn" class="btn btn-danger btn-sm">
-                    Delete selected
-                </button>
-                <button id="batch-clear-btn" class="btn btn-sm">Clear</button>
-            </div>
+  <div class="toolbar">
+    <div class="breadcrumbs" id="breadcrumbs"></div>
+    <div class="toolbar-actions">
+      <button id="upload-btn" class="btn btn-primary">Upload</button>
+      <button id="create-folder-btn" class="btn">New Folder</button>
+      <button id="refresh-btn" class="btn" title="Refresh">&#x21bb;</button>
+    </div>
+    <select id="mobile-sort" class="mobile-sort">
+      <option value="name-asc">Name ↑</option>
+      <option value="name-desc">Name ↓</option>
+      <option value="type-asc">Type ↑</option>
+      <option value="size-desc">Size ↓</option>
+      <option value="modifiedAt-desc">Date ↓</option>
+    </select>
+  </div>
 
-            <div id="error-banner" class="error-banner hidden"></div>
+  <div id="batch-bar" class="batch-bar hidden">
+    <span id="batch-count"></span>
+    <button id="batch-delete-btn" class="btn btn-danger btn-sm">Delete selected</button>
+    <button id="batch-clear-btn" class="btn btn-sm">Clear</button>
+  </div>
 
-            <div id="drop-zone" class="file-table-wrapper">
-                <div id="drop-overlay" class="drop-overlay hidden">
-                    <div class="drop-message">Drop files here to upload</div>
-                </div>
-                <div class="table-scroll">
-                    <table class="file-table">
-                        <thead>
-                            <tr>
-                                <th class="col-check">
-                                    <input
-                                        type="checkbox"
-                                        id="select-all"
-                                        title="Select all"
-                                    />
-                                </th>
-                                <th class="sortable" data-sort="name">
-                                    Name <span class="sort-arrow"></span>
-                                </th>
-                                <th class="sortable" data-sort="type">
-                                    Type <span class="sort-arrow"></span>
-                                </th>
-                                <th class="sortable" data-sort="size">
-                                    Size <span class="sort-arrow"></span>
-                                </th>
-                                <th class="sortable" data-sort="modifiedAt">
-                                    Modified <span class="sort-arrow"></span>
-                                </th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="file-list"></tbody>
-                    </table>
-                </div>
-                <div id="loading-state" class="loading hidden">Loading...</div>
-                <div id="empty-state" class="empty-state hidden">
-                    This folder is empty.<br /><small
-                        >Drag &amp; drop files here to upload.</small
-                    >
-                </div>
-            </div>
+  <div id="error-banner" class="error-banner hidden"></div>
 
-            <div class="pagination" id="pagination">
-                <button id="prev-page" class="btn" disabled>Previous</button>
-                <span id="page-info"></span>
-                <button id="next-page" class="btn" disabled>Next</button>
-            </div>
-        </div>
+  <div id="drop-zone" class="file-table-wrapper">
+    <div id="drop-overlay" class="drop-overlay hidden">
+      <div class="drop-message">Drop files here to upload</div>
+    </div>
+    <div class="table-scroll">
+      <table class="file-table">
+        <thead>
+          <tr>
+            <th class="col-check"><input type="checkbox" id="select-all" title="Select all"></th>
+            <th class="sortable" data-sort="name">Name <span class="sort-arrow"></span></th>
+            <th class="sortable" data-sort="type">Type <span class="sort-arrow"></span></th>
+            <th class="sortable" data-sort="size">Size <span class="sort-arrow"></span></th>
+            <th class="sortable" data-sort="modifiedAt">Modified <span class="sort-arrow"></span></th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="file-list"></tbody>
+      </table>
+    </div>
+    <div id="loading-state" class="loading hidden">Loading...</div>
+    <div id="empty-state" class="empty-state hidden">This folder is empty.<br><small>Drag &amp; drop files here to upload.</small></div>
+  </div>
 
-        <input type="file" id="upload-input" class="hidden" multiple />
+  <div class="pagination" id="pagination">
+    <button id="prev-page" class="btn" disabled>Previous</button>
+    <span id="page-info"></span>
+    <button id="next-page" class="btn" disabled>Next</button>
+  </div>
+</div>
 
-        <div id="folder-modal" class="modal hidden">
-            <div class="modal-backdrop"></div>
-            <div class="modal-card">
-                <h2>New Folder</h2>
-                <input
-                    type="text"
-                    id="folder-name-input"
-                    placeholder="Folder name"
-                    autofocus
-                />
-                <div class="modal-actions">
-                    <button id="folder-cancel" class="btn">Cancel</button>
-                    <button id="folder-confirm" class="btn btn-primary">
-                        Create
-                    </button>
-                </div>
-            </div>
-        </div>
+<!-- Admin -->
+<div id="admin-screen" class="screen hidden">
+  <header class="app-header">
+    <h1 class="app-title">Admin Panel</h1>
+    <div class="header-right">
+      <button id="admin-back-btn" class="btn">← Back to Files</button>
+    </div>
+  </header>
 
-        <div id="rename-modal" class="modal hidden">
-            <div class="modal-backdrop"></div>
-            <div class="modal-card">
-                <h2>Rename</h2>
-                <input type="text" id="rename-input" placeholder="New name" />
-                <div class="modal-actions">
-                    <button id="rename-cancel" class="btn">Cancel</button>
-                    <button id="rename-confirm" class="btn btn-primary">
-                        Rename
-                    </button>
-                </div>
-            </div>
-        </div>
+  <div class="admin-section">
+    <h2>Create User</h2>
+    <div class="admin-create-form">
+      <input type="text" id="admin-username" placeholder="Username" autocomplete="off">
+      <input type="password" id="admin-password" placeholder="Password" autocomplete="off">
+      <select id="admin-role">
+        <option value="user">User</option>
+        <option value="admin">Admin</option>
+      </select>
+      <button id="admin-create-btn" class="btn btn-primary btn-sm">Create</button>
+    </div>
+    <div id="admin-create-error" class="error-banner hidden"></div>
+  </div>
 
-        <div id="delete-modal" class="modal hidden">
-            <div class="modal-backdrop"></div>
-            <div class="modal-card">
-                <h2>Delete</h2>
-                <p>
-                    Are you sure you want to delete
-                    <strong id="delete-name"></strong>?
-                </p>
-                <div class="modal-actions">
-                    <button id="delete-cancel" class="btn">Cancel</button>
-                    <button id="delete-confirm" class="btn btn-danger">
-                        Delete
-                    </button>
-                </div>
-            </div>
-        </div>
+  <div class="admin-section">
+    <h2>Change Your Password</h2>
+    <div class="admin-create-form">
+      <input type="password" id="admin-self-oldpw" placeholder="Current password" autocomplete="off">
+      <input type="password" id="admin-self-newpw" placeholder="New password (min 4 chars)" autocomplete="off">
+      <button id="admin-self-pw-btn" class="btn btn-primary btn-sm">Change</button>
+    </div>
+    <div id="admin-self-pw-error" class="error-banner hidden"></div>
+  </div>
 
-        <div id="publish-modal" class="modal hidden">
-            <div class="modal-backdrop"></div>
-            <div class="modal-card publish-card">
-                <h2>Public Link</h2>
-                <p class="publish-path" id="publish-path"></p>
-                <div class="publish-url-box">
-                    <input type="text" id="publish-url-input" readonly />
-                    <button id="publish-copy-btn" class="btn btn-sm">
-                        Copy
-                    </button>
-                </div>
-                <div class="modal-actions">
-                    <button id="publish-close" class="btn">Close</button>
-                    <button
-                        id="publish-revoke-btn"
-                        class="btn btn-danger btn-sm"
-                    >
-                        Revoke
-                    </button>
-                </div>
-            </div>
-        </div>
+  <div class="admin-section">
+    <h2>Users</h2>
+    <div class="table-scroll">
+      <table class="file-table">
+        <thead>
+          <tr>
+            <th>Username</th>
+            <th>Role</th>
+            <th>Created</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="admin-user-list"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
 
-        <script src="/app.js"></script>
-    </body>
+<input type="file" id="upload-input" class="hidden" multiple>
+
+<!-- Modals -->
+<div id="folder-modal" class="modal hidden">
+  <div class="modal-backdrop"></div><div class="modal-card">
+    <h2>New Folder</h2>
+    <input type="text" id="folder-name-input" placeholder="Folder name" autofocus>
+    <div class="modal-actions"><button id="folder-cancel" class="btn">Cancel</button><button id="folder-confirm" class="btn btn-primary">Create</button></div>
+  </div>
+</div>
+
+<div id="rename-modal" class="modal hidden">
+  <div class="modal-backdrop"></div><div class="modal-card">
+    <h2>Rename</h2>
+    <input type="text" id="rename-input" placeholder="New name">
+    <div class="modal-actions"><button id="rename-cancel" class="btn">Cancel</button><button id="rename-confirm" class="btn btn-primary">Rename</button></div>
+  </div>
+</div>
+
+<div id="delete-modal" class="modal hidden">
+  <div class="modal-backdrop"></div><div class="modal-card">
+    <h2>Delete</h2>
+    <p>Are you sure you want to delete <strong id="delete-name"></strong>?</p>
+    <div class="modal-actions"><button id="delete-cancel" class="btn">Cancel</button><button id="delete-confirm" class="btn btn-danger">Delete</button></div>
+  </div>
+</div>
+
+<div id="publish-modal" class="modal hidden">
+  <div class="modal-backdrop"></div><div class="modal-card publish-card">
+    <h2>Public Link</h2>
+    <p class="publish-path" id="publish-path"></p>
+    <div class="publish-url-box"><input type="text" id="publish-url-input" readonly><button id="publish-copy-btn" class="btn btn-sm">Copy</button></div>
+    <div class="modal-actions"><button id="publish-close" class="btn">Close</button><button id="publish-revoke-btn" class="btn btn-danger btn-sm">Revoke</button></div>
+  </div>
+</div>
+
+<script src="/app.js"></script>
+</body>
 </html>

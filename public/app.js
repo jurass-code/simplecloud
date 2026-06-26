@@ -1,780 +1,191 @@
 (function () {
-  "use strict";
+  'use strict';
 
   var state = {
     user: null,
-    currentPath: "/",
+    currentPath: '/',
     page: 1,
     pageSize: 50,
-    sort: "name",
-    direction: "asc",
+    sort: 'name',
+    direction: 'asc',
     listData: null,
     loading: false,
     published: [],
     selected: {},
   };
 
-  var $ = function (sel) {
-    return document.querySelector(sel);
-  };
+  var $ = function (sel) { return document.querySelector(sel); };
+  var ls = $('#login-screen'), as = $('#app-screen'), ads = $('#admin-screen');
+  var lf = $('#login-form'), le = $('#login-error');
+  var eb = $('#error-banner'), ft = $('#file-list'), bc = $('#breadcrumbs');
+  var ld = $('#loading-state'), em = $('#empty-state'), pi = $('#page-info');
+  var pb = $('#prev-page'), nb = $('#next-page'), cu = $('#current-user');
+  var dd = $('#drop-overlay'), bb = $('#batch-bar'), bcn = $('#batch-count'), sa = $('#select-all');
+  var ab = $('#admin-btn'), aul = $('#admin-user-list'), ace = $('#admin-create-error');
 
-  var loginScreen = $("#login-screen");
-  var appScreen = $("#app-screen");
-  var loginForm = $("#login-form");
-  var loginError = $("#login-error");
-  var errorBanner = $("#error-banner");
-  var fileTbody = $("#file-list");
-  var breadcrumbs = $("#breadcrumbs");
-  var loadingState = $("#loading-state");
-  var emptyState = $("#empty-state");
-  var pageInfo = $("#page-info");
-  var prevBtn = $("#prev-page");
-  var nextBtn = $("#next-page");
-  var currentUser = $("#current-user");
-  var dropOverlay = $("#drop-overlay");
-  var batchBar = $("#batch-bar");
-  var batchCount = $("#batch-count");
-  var selectAll = $("#select-all");
-
-  // ---- API ----
   async function api(method, url, body) {
-    var opts = { method: method, headers: {} };
-    if (body && !(body instanceof FormData)) {
-      opts.headers["Content-Type"] = "application/json";
-      opts.body = JSON.stringify(body);
-    } else if (body instanceof FormData) {
-      opts.body = body;
-    }
-    var res = await fetch(url, opts);
-    var data = await res.json();
-    if (!res.ok)
-      throw new Error(data && data.error ? data.error.message : res.statusText);
-    return data;
+    var o = { method: method, headers: {} };
+    if (body && !(body instanceof FormData)) { o.headers['Content-Type'] = 'application/json'; o.body = JSON.stringify(body); }
+    else if (body instanceof FormData) o.body = body;
+    var r = await fetch(url, o), d = await r.json();
+    if (!r.ok) throw new Error(d && d.error ? d.error.message : r.statusText);
+    return d;
   }
 
-  async function loadPublished() {
+  async function loadPublished() { try { state.published = await api('GET', '/api/files/published'); } catch (e) { state.published = []; } }
+  function isPublished(p) { return state.published.find(function (x) { return x.path === p; }); }
+
+  // Auth
+  lf.addEventListener('submit', async function (e) {
+    e.preventDefault(); var fd = new FormData(lf); le.classList.add('hidden');
+    var b = $('#login-btn'); b.disabled = true; b.textContent = 'Signing in...';
+    try { var d = await api('POST', '/api/auth/login', { username: fd.get('username'), password: fd.get('password') }); state.user = d.user; showApp(); }
+    catch (err) { le.textContent = err.message; le.classList.remove('hidden'); }
+    finally { b.disabled = false; b.textContent = 'Sign in'; }
+  });
+  $('#logout-btn').addEventListener('click', async function () { await api('POST', '/api/auth/logout'); state.user = null; showLogin(); });
+
+  // Navigation
+  function nav(p) { state.currentPath = p; state.page = 1; cs(); loadFiles(); }
+  function buildBC() { var p = state.currentPath.split('/').filter(Boolean), h = '<a data-path="/">Home</a>', a = ''; for (var i = 0; i < p.length; i++) { a += '/' + p[i]; h += ' <span class="sep">/</span> <a data-path="' + ea(a) + '">' + eh(p[i]) + '</a>'; } bc.innerHTML = h; bc.querySelectorAll('a').forEach(function (x) { x.addEventListener('click', function (e) { e.preventDefault(); nav(x.dataset.path); }); }); }
+
+  // Selection
+  function cs() { state.selected = {}; sa.checked = false; ubb(); }
+  function ts(p) { if (state.selected[p]) delete state.selected[p]; else state.selected[p] = true; ubb(); usac(); hr(); }
+  function usac() { if (!state.listData || !state.listData.items.length) { sa.checked = false; return; } sa.checked = state.listData.items.every(function (i) { return state.selected[i.path]; }); }
+  function ubb() { var c = Object.keys(state.selected).length; if (c) { bb.classList.remove('hidden'); bcn.textContent = c + ' selected'; } else bb.classList.add('hidden'); }
+  function hr() { ft.querySelectorAll('tr').forEach(function (tr) { var cb = tr.querySelector('.row-checkbox'); if (cb && cb.checked) tr.classList.add('selected'); else tr.classList.remove('selected'); }); }
+  sa.addEventListener('change', function () { if (!state.listData) return; if (sa.checked) state.listData.items.forEach(function (i) { state.selected[i.path] = true; }); else state.selected = {}; ft.querySelectorAll('.row-checkbox').forEach(function (c) { c.checked = sa.checked; }); ubb(); hr(); });
+  $('#batch-delete-btn').addEventListener('click', async function () { var p = Object.keys(state.selected); if (!p.length) return; if (!confirm('Delete ' + p.length + ' item(s)?')) return; try { await api('POST', '/api/files/delete-batch', { paths: p }); cs(); he(); if (state.listData && state.listData.items.length === p.length && state.page > 1) state.page--; loadFiles(); } catch (err) { se(err.message); } });
+  $('#batch-clear-btn').addEventListener('click', function () { cs(); hr(); });
+
+  // Files
+  async function loadFiles() { state.loading = true; rl(); he(); try { var p = new URLSearchParams({ path: state.currentPath, page: state.page, pageSize: state.pageSize, sort: state.sort, direction: state.direction }); state.listData = await api('GET', '/api/files?' + p.toString()); state.loading = false; await loadPublished(); rf(); } catch (err) { state.loading = false; state.listData = null; se(err.message); rf(); } }
+  function rl() { ft.innerHTML = ''; ld.classList.remove('hidden'); em.classList.add('hidden'); }
+  function rf() { ld.classList.add('hidden'); var d = state.listData; if (!d || !d.items.length) { ft.innerHTML = ''; em.classList.toggle('hidden', !!state.loading); } else { em.classList.add('hidden'); } if (!d) return;
+    ft.innerHTML = d.items.map(function (i) { var pub = isPublished(i.path), ch = state.selected[i.path] ? ' checked' : '', ic = i.type === 'folder' ? '<span class="folder-icon">&#128193;</span>' : '<span>&#128196;</span>', nm = i.type === 'folder' ? '<a class="file-link" data-path="' + ea(i.path) + '">' + ic + ' ' + eh(i.name) + '</a>' : '<a class="file-link" href="/api/files/download?path=' + encodeURIComponent(i.path) + '" download>' + ic + ' ' + eh(i.name) + '</a>';
+      return '<tr class="' + (ch ? 'selected' : '') + '"><td class="col-check" data-label=""><input type="checkbox" class="row-checkbox" data-path="' + ea(i.path) + '"' + ch + '></td>' +
+        '<td data-label="Name">' + nm + '</td><td data-label="Type">' + i.type + '</td>' +
+        '<td class="file-size" data-label="Size">' + (i.type === 'folder' ? '—' : fs(i.size)) + '</td>' +
+        '<td class="file-date" data-label="Modified">' + fd(i.modifiedAt) + '</td>' +
+        '<td data-label="Actions"><div class="row-actions">' +
+          '<button class="btn btn-sm rename-btn" data-path="' + ea(i.path) + '" data-name="' + ea(i.name) + '">Rename</button>' +
+          '<button class="btn btn-sm btn-danger delete-btn" data-path="' + ea(i.path) + '" data-name="' + ea(i.name) + '">Del</button>' +
+          (pub ? '<button class="btn btn-sm btn-publish pub-link-btn" data-path="' + ea(i.path) + '">Link</button>' : '<button class="btn btn-sm publish-btn" data-path="' + ea(i.path) + '">Publish</button>') +
+        '</div></td></tr>'; }).join('');
+    ft.querySelectorAll('.row-checkbox').forEach(function (c) { c.addEventListener('change', function () { ts(c.dataset.path); }); });
+    ft.querySelectorAll('a[data-path]').forEach(function (a) { a.addEventListener('click', function (e) { e.preventDefault(); nav(a.dataset.path); }); });
+    ft.querySelectorAll('.rename-btn').forEach(function (b) { b.addEventListener('click', function () { orm(b.dataset.path, b.dataset.name); }); });
+    ft.querySelectorAll('.delete-btn').forEach(function (b) { b.addEventListener('click', function () { odm(b.dataset.path, b.dataset.name); }); });
+    ft.querySelectorAll('.publish-btn').forEach(function (b) { b.addEventListener('click', function () { pp(b.dataset.path); }); });
+    ft.querySelectorAll('.pub-link-btn').forEach(function (e) { e.addEventListener('click', function () { opm(e.dataset.path); }); });
+    usac(); rsa(); rp(); }
+  function rp() { var d = state.listData; if (!d || !d.total) { pb.disabled = true; nb.disabled = true; pi.textContent = ''; return; } var t = Math.ceil(d.total / d.pageSize); pb.disabled = state.page <= 1; nb.disabled = state.page >= t; pi.textContent = 'Page ' + state.page + ' of ' + t + ' (' + d.total + ' items)'; }
+  document.querySelectorAll('.sortable').forEach(function (th) { th.addEventListener('click', function () { var f = th.dataset.sort; if (state.sort === f) state.direction = state.direction === 'asc' ? 'desc' : 'asc'; else { state.sort = f; state.direction = 'asc'; } state.page = 1; cs(); loadFiles(); }); });
+  function rsa() { document.querySelectorAll('.sort-arrow').forEach(function (e) { e.classList.remove('asc', 'desc'); }); var a = document.querySelector('th[data-sort="' + state.sort + '"] .sort-arrow'); if (a) a.classList.add(state.direction); }
+  pb.addEventListener('click', function () { if (state.page > 1) { state.page--; cs(); loadFiles(); } });
+  nb.addEventListener('click', function () { var t = Math.ceil((state.listData && state.listData.total || 0) / state.pageSize); if (state.page < t) { state.page++; cs(); loadFiles(); } });
+  var ms = $('#mobile-sort'); if (ms) ms.addEventListener('change', function () { var p = ms.value.split('-'); state.sort = p[0]; state.direction = p[1]; state.page = 1; cs(); loadFiles(); });
+
+  // Upload
+  var ui = $('#upload-input'); $('#upload-btn').addEventListener('click', function () { ui.click(); }); ui.addEventListener('change', function () { du(ui.files); });
+  var dc = 0; function iv() { return !as.classList.contains('hidden'); } function amo() { return !$('#folder-modal').classList.contains('hidden') || !$('#rename-modal').classList.contains('hidden') || !$('#delete-modal').classList.contains('hidden') || !$('#publish-modal').classList.contains('hidden'); }
+  as.addEventListener('dragenter', function (e) { if (!iv() || amo()) return; e.preventDefault(); dc++; if (dc === 1) dd.classList.remove('hidden'); });
+  as.addEventListener('dragleave', function (e) { if (!iv()) return; e.preventDefault(); dc--; if (!dc) dd.classList.add('hidden'); });
+  as.addEventListener('dragover', function (e) { if (!iv() || amo()) return; e.preventDefault(); });
+  as.addEventListener('drop', function (e) { if (!iv() || amo()) return; e.preventDefault(); dc = 0; dd.classList.add('hidden'); if (e.dataTransfer.files.length) du(e.dataTransfer.files); });
+  async function du(files) { if (!files || !files.length) return; he(); var pr = sup(files.length); var fd = new FormData(); for (var i = 0; i < files.length; i++) fd.append('files', files[i]); try { var r = await fetch('/api/files/upload?path=' + encodeURIComponent(state.currentPath), { method: 'POST', body: fd }); var d = await r.json(); if (!r.ok) throw new Error((d && d.error && d.error.message) || 'Upload failed'); if (d.files) uup(pr, d.files); } catch (e) { se('Upload: ' + e.message); if (pr) pr.remove(); } ui.value = ''; loadFiles(); }
+  function sup(t) { var e = document.createElement('div'); e.className = 'upload-progress'; e.innerHTML = '<h3>Uploading ' + t + ' file(s)...</h3><div class="bar"><div class="bar-fill" style="width:0%"></div></div>'; document.body.appendChild(e); setTimeout(function () { var b = e.querySelector('.bar-fill'); if (b) { b.style.transition = 'width 30s linear'; b.style.width = '90%'; } }, 100); return e; }
+  function uup(e, files) { var t = files.length, ok = 0, err = 0; files.forEach(function (f) { if (f.status === 'ok') ok++; else err++; }); var p = Math.round(((ok + err) / t) * 100); var b = e.querySelector('.bar-fill'); if (b) { b.style.transition = 'width 0.3s ease'; b.style.width = p + '%'; } var h = '<h3>Uploaded ' + (ok + err) + ' of ' + t + '</h3>'; files.forEach(function (f) { var c = f.status === 'ok' ? 'ok' : 'err'; h += '<div class="file-item"><span>' + (f.status === 'ok' ? '✓' : '✗') + ' ' + eh(f.name) + '</span><span class="' + c + '">' + (f.status === 'ok' ? fs(f.size || 0) : (f.message || 'error')) + '</span></div>'; }); h += '<div class="bar"><div class="bar-fill" style="width:' + p + '%"></div></div>'; e.innerHTML = h; setTimeout(function () { e.remove(); }, 4000); }
+
+  // Modals
+  var fm = $('#folder-modal'), fi = $('#folder-name-input');
+  $('#create-folder-btn').addEventListener('click', function () { fm.classList.remove('hidden'); fi.value = ''; fi.focus(); });
+  $('#folder-cancel').addEventListener('click', function () { fm.classList.add('hidden'); });
+  $('#folder-confirm').addEventListener('click', async function () { var n = fi.value.trim(); if (!n) return; try { await api('POST', '/api/files/folder', { path: state.currentPath, name: n }); fm.classList.add('hidden'); he(); loadFiles(); } catch (e) { se(e.message); } });
+  fi.addEventListener('keydown', function (e) { if (e.key === 'Enter') $('#folder-confirm').click(); if (e.key === 'Escape') fm.classList.add('hidden'); });
+
+  var rm = $('#rename-modal'), ri = $('#rename-input'), rt = '';
+  function orm(p, n) { rt = p; ri.value = n; rm.classList.remove('hidden'); ri.focus(); }
+  $('#rename-cancel').addEventListener('click', function () { rm.classList.add('hidden'); });
+  $('#rename-confirm').addEventListener('click', async function () { var n = ri.value.trim(); if (!n) return; try { await api('PATCH', '/api/files/rename', { path: rt, newName: n }); rm.classList.add('hidden'); he(); loadFiles(); } catch (e) { se(e.message); } });
+  ri.addEventListener('keydown', function (e) { if (e.key === 'Enter') $('#rename-confirm').click(); if (e.key === 'Escape') rm.classList.add('hidden'); });
+
+  var dm = $('#delete-modal'), dnm = $('#delete-name'), dt = '';
+  function odm(p, n) { dt = p; dnm.textContent = n; dm.classList.remove('hidden'); }
+  $('#delete-cancel').addEventListener('click', function () { dm.classList.add('hidden'); });
+  $('#delete-confirm').addEventListener('click', async function () { try { await api('DELETE', '/api/files?path=' + encodeURIComponent(dt)); dm.classList.add('hidden'); he(); if (state.listData && state.listData.items.length === 1 && state.page > 1) state.page--; loadFiles(); } catch (e) { se(e.message); } });
+
+  async function pp(p) { try { await api('POST', '/api/files/publish', { path: p }); await loadPublished(); rf(); opm(p); } catch (e) { se(e.message); } }
+  var pm = $('#publish-modal'), pui = $('#publish-url-input'), ppe = $('#publish-path'), prv = $('#publish-revoke-btn'), cp = '';
+  function opm(p) { cp = p; ppe.textContent = p; var pub = isPublished(p); if (pub) { pui.value = location.origin + '/pub' + p; prv.classList.remove('hidden'); } else { pui.value = '(not published)'; prv.classList.add('hidden'); } pm.classList.remove('hidden'); }
+  $('#publish-close').addEventListener('click', function () { pm.classList.add('hidden'); });
+  $('#publish-revoke-btn').addEventListener('click', async function () { try { await api('DELETE', '/api/files/publish', { path: cp }); pm.classList.add('hidden'); he(); await loadPublished(); rf(); } catch (e) { se(e.message); } });
+  $('#publish-copy-btn').addEventListener('click', function () { pui.select(); document.execCommand('copy'); var b = $('#publish-copy-btn'); b.textContent = 'Copied!'; setTimeout(function () { b.textContent = 'Copy'; }, 1500); });
+  $('#refresh-btn').addEventListener('click', function () { loadFiles(); });
+  document.querySelectorAll('.modal-backdrop').forEach(function (bd) { bd.addEventListener('click', function () { fm.classList.add('hidden'); rm.classList.add('hidden'); dm.classList.add('hidden'); pm.classList.add('hidden'); }); });
+
+  // Helpers
+  function se(m) { eb.textContent = m; eb.classList.remove('hidden'); }
+  function he() { eb.classList.add('hidden'); }
+  function fs(b) { if (b < 1024) return b + ' B'; if (b < 1048576) return (b / 1024).toFixed(1) + ' KB'; if (b < 1073741824) return (b / 1048576).toFixed(1) + ' MB'; return (b / 1073741824).toFixed(1) + ' GB'; }
+  function fd(iso) { var d = new Date(iso); return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }); }
+  function eh(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+  function ea(s) { return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+  // Screens
+  function showLogin() { ls.classList.remove('hidden'); as.classList.add('hidden'); ads.classList.add('hidden'); ab.classList.add('hidden'); }
+  function showApp() { ls.classList.add('hidden'); as.classList.remove('hidden'); ads.classList.add('hidden'); cu.textContent = state.user.username; if (state.user.role === 'admin') ab.classList.remove('hidden'); state.currentPath = '/'; state.page = 1; buildBC(); loadFiles(); }
+  function showAdmin() { as.classList.add('hidden'); ads.classList.remove('hidden'); loadAdminUsers(); }
+
+  // Admin button → navigate to admin screen
+  ab.addEventListener('click', function () { showAdmin(); });
+  $('#admin-back-btn').addEventListener('click', function () { showApp(); });
+
+  // Admin self-service password change
+  $('#admin-self-pw-btn').addEventListener('click', async function () {
+    var op = $('#admin-self-oldpw').value;
+    var np = $('#admin-self-newpw').value;
+    if (!op || !np) return;
+    var errEl = $('#admin-self-pw-error');
+    errEl.classList.add('hidden');
+    errEl.classList.remove('success');
     try {
-      state.published = await api("GET", "/api/files/published");
-    } catch (e) {
-      state.published = [];
-    }
-  }
-
-  function isPublished(userPath) {
-    return state.published.find(function (p) {
-      return p.path === userPath;
-    });
-  }
-
-  // ---- Auth ----
-  loginForm.addEventListener("submit", async function (e) {
-    e.preventDefault();
-    var fd = new FormData(loginForm);
-    loginError.classList.add("hidden");
-    var btn = $("#login-btn");
-    btn.disabled = true;
-    btn.textContent = "Signing in...";
-    try {
-      var data = await api("POST", "/api/auth/login", {
-        username: fd.get("username"),
-        password: fd.get("password"),
-      });
-      state.user = data.user;
-      showApp();
+      await api('PATCH', '/api/auth/password', { oldPassword: op, newPassword: np });
+      $('#admin-self-oldpw').value = '';
+      $('#admin-self-newpw').value = '';
+      errEl.textContent = 'Password changed.';
+      errEl.classList.add('success');
+      errEl.classList.remove('hidden');
+      setTimeout(function () { errEl.classList.add('hidden'); errEl.classList.remove('success'); }, 3000);
     } catch (err) {
-      loginError.textContent = err.message;
-      loginError.classList.remove("hidden");
-    } finally {
-      btn.disabled = false;
-      btn.textContent = "Sign in";
+      errEl.textContent = err.message;
+      errEl.classList.remove('hidden');
     }
   });
 
-  $("#logout-btn").addEventListener("click", async function () {
-    await api("POST", "/api/auth/logout");
-    state.user = null;
-    showLogin();
-  });
-
-  // ---- Navigation ----
-  function navigateTo(p) {
-    state.currentPath = p;
-    state.page = 1;
-    clearSelection();
-    loadFiles();
+  // Admin users
+  async function loadAdminUsers() {
+    try { var d = await api('GET', '/api/admin/users');
+      aul.innerHTML = d.users.map(function (u) { var is = u.id === state.user.id;
+        return '<tr><td>' + eh(u.username) + (is ? ' (you)' : '') + '</td>' +
+          '<td><span class="admin-role-badge ' + u.role + '">' + u.role + '</span></td>' +
+          '<td class="file-date">' + fd(u.createdAt) + '</td>' +
+          '<td><div class="row-actions">' +
+            (u.role === 'admin' ? '<button class="btn btn-sm admin-demote-btn" data-user="' + ea(u.username) + '" ' + (is ? 'disabled' : '') + '>Make User</button>' : '<button class="btn btn-sm admin-promote-btn" data-user="' + ea(u.username) + '">Make Admin</button>') +
+            (is ? '' : ' <button class="btn btn-sm btn-danger admin-delete-btn" data-user="' + ea(u.username) + '">Del</button>') +
+            ' <button class="btn btn-sm admin-resetpw-btn" data-user="' + ea(u.username) + '">Reset PW</button>' +
+          '</div></td></tr>'; }).join('');
+      aul.querySelectorAll('.admin-promote-btn').forEach(function (b) { b.addEventListener('click', function () { adminSetRole(b.dataset.user, 'admin'); }); });
+      aul.querySelectorAll('.admin-demote-btn').forEach(function (b) { b.addEventListener('click', function () { adminSetRole(b.dataset.user, 'user'); }); });
+      aul.querySelectorAll('.admin-delete-btn').forEach(function (b) { b.addEventListener('click', function () { adminDeleteUser(b.dataset.user); }); });
+      aul.querySelectorAll('.admin-resetpw-btn').forEach(function (b) { b.addEventListener('click', function () { adminResetPassword(b.dataset.user); }); });
+    } catch (err) { aul.innerHTML = '<tr><td colspan="4">Error: ' + eh(err.message) + '</td></tr>'; }
   }
+  async function adminSetRole(un, r) { try { await api('PATCH', '/api/admin/users/' + encodeURIComponent(un), { role: r }); loadAdminUsers(); } catch (e) { se(e.message); } }
+  async function adminDeleteUser(un) { if (!confirm('Delete user "' + un + '"?')) return; try { await api('DELETE', '/api/admin/users/' + encodeURIComponent(un)); loadAdminUsers(); } catch (e) { se(e.message); } }
+  async function adminResetPassword(un) { var pw = prompt('New password for ' + un + ' (min 4 chars):'); if (!pw) return; try { await api('PATCH', '/api/admin/users/' + encodeURIComponent(un) + '/password', { password: pw }); alert('Password reset for ' + un); } catch (e) { se(e.message); } }
+  $('#admin-create-btn').addEventListener('click', async function () { var un = $('#admin-username').value.trim(), pw = $('#admin-password').value, r = $('#admin-role').value; if (!un || !pw) return; ace.classList.add('hidden'); try { await api('POST', '/api/admin/users', { username: un, password: pw, role: r }); $('#admin-username').value = ''; $('#admin-password').value = ''; loadAdminUsers(); } catch (e) { ace.textContent = e.message; ace.classList.remove('hidden'); } });
 
-  function buildBreadcrumbs() {
-    var parts = state.currentPath.split("/").filter(Boolean);
-    var html = '<a data-path="/">Home</a>';
-    var acc = "";
-    for (var i = 0; i < parts.length; i++) {
-      acc += "/" + parts[i];
-      html +=
-        ' <span class="sep">/</span> <a data-path="' +
-        escapeAttr(acc) +
-        '">' +
-        escapeHtml(parts[i]) +
-        "</a>";
-    }
-    breadcrumbs.innerHTML = html;
-    breadcrumbs.querySelectorAll("a").forEach(function (a) {
-      a.addEventListener("click", function (ev) {
-        ev.preventDefault();
-        navigateTo(a.dataset.path);
-      });
-    });
-  }
-
-  // ---- Selection ----
-  function clearSelection() {
-    state.selected = {};
-    selectAll.checked = false;
-    updateBatchBar();
-  }
-  function toggleSelect(path) {
-    if (state.selected[path]) delete state.selected[path];
-    else state.selected[path] = true;
-    updateBatchBar();
-    updateSelectAllCheckbox();
-    highlightRows();
-  }
-  function updateSelectAllCheckbox() {
-    if (!state.listData || state.listData.items.length === 0) {
-      selectAll.checked = false;
-      return;
-    }
-    selectAll.checked = state.listData.items.every(function (i) {
-      return state.selected[i.path];
-    });
-  }
-  function updateBatchBar() {
-    var count = Object.keys(state.selected).length;
-    if (count > 0) {
-      batchBar.classList.remove("hidden");
-      batchCount.textContent = count + " selected";
-    } else batchBar.classList.add("hidden");
-  }
-  function highlightRows() {
-    fileTbody.querySelectorAll("tr").forEach(function (tr) {
-      var cb = tr.querySelector(".row-checkbox");
-      if (cb && cb.checked) tr.classList.add("selected");
-      else tr.classList.remove("selected");
-    });
-  }
-
-  selectAll.addEventListener("change", function () {
-    if (!state.listData) return;
-    if (selectAll.checked)
-      state.listData.items.forEach(function (i) {
-        state.selected[i.path] = true;
-      });
-    else state.selected = {};
-    fileTbody.querySelectorAll(".row-checkbox").forEach(function (cb) {
-      cb.checked = selectAll.checked;
-    });
-    updateBatchBar();
-    highlightRows();
-  });
-
-  // ---- Batch delete ----
-  $("#batch-delete-btn").addEventListener("click", async function () {
-    var paths = Object.keys(state.selected);
-    if (paths.length === 0) return;
-    if (!confirm("Delete " + paths.length + " item(s)?")) return;
-    try {
-      await api("POST", "/api/files/delete-batch", { paths: paths });
-      clearSelection();
-      hideError();
-      if (
-        state.listData &&
-        state.listData.items.length === paths.length &&
-        state.page > 1
-      )
-        state.page--;
-      loadFiles();
-    } catch (err) {
-      showError(err.message);
-    }
-  });
-  $("#batch-clear-btn").addEventListener("click", function () {
-    clearSelection();
-    highlightRows();
-  });
-
-  // ---- File loading ----
-  async function loadFiles() {
-    state.loading = true;
-    renderLoading();
-    hideError();
-    try {
-      var params = new URLSearchParams({
-        path: state.currentPath,
-        page: state.page,
-        pageSize: state.pageSize,
-        sort: state.sort,
-        direction: state.direction,
-      });
-      var data = await api("GET", "/api/files?" + params.toString());
-      state.listData = data;
-      state.loading = false;
-      await loadPublished();
-      renderFiles();
-    } catch (err) {
-      state.loading = false;
-      state.listData = null;
-      showError(err.message);
-      renderFiles();
-    }
-  }
-
-  function renderLoading() {
-    fileTbody.innerHTML = "";
-    loadingState.classList.remove("hidden");
-    emptyState.classList.add("hidden");
-  }
-
-  function renderFiles() {
-    loadingState.classList.add("hidden");
-    var data = state.listData;
-    if (!data || data.items.length === 0) {
-      fileTbody.innerHTML = "";
-      emptyState.classList.toggle("hidden", !!state.loading);
-    } else {
-      emptyState.classList.add("hidden");
-    }
-    if (!data) return;
-
-    fileTbody.innerHTML = data.items
-      .map(function (item) {
-        var pub = isPublished(item.path);
-        var checked = state.selected[item.path] ? " checked" : "";
-        var typeIcon =
-          item.type === "folder"
-            ? '<span class="folder-icon">&#128193;</span>'
-            : "<span>&#128196;</span>";
-        var nameCell =
-          item.type === "folder"
-            ? '<a class="file-link" data-path="' +
-              escapeAttr(item.path) +
-              '">' +
-              typeIcon +
-              " " +
-              escapeHtml(item.name) +
-              "</a>"
-            : '<a class="file-link" href="/api/files/download?path=' +
-              encodeURIComponent(item.path) +
-              '" download>' +
-              typeIcon +
-              " " +
-              escapeHtml(item.name) +
-              "</a>";
-
-        return (
-          '<tr class="' +
-          (checked ? "selected" : "") +
-          '">' +
-          '<td class="col-check" data-label=""><input type="checkbox" class="row-checkbox" data-path="' +
-          escapeAttr(item.path) +
-          '"' +
-          checked +
-          "></td>" +
-          '<td data-label="Name">' +
-          nameCell +
-          "</td>" +
-          '<td data-label="Type">' +
-          item.type +
-          "</td>" +
-          '<td class="file-size" data-label="Size">' +
-          (item.type === "folder" ? "—" : formatSize(item.size)) +
-          "</td>" +
-          '<td class="file-date" data-label="Modified">' +
-          formatDate(item.modifiedAt) +
-          "</td>" +
-          '<td data-label="Actions"><div class="row-actions">' +
-          '<button class="btn btn-sm rename-btn" data-path="' +
-          escapeAttr(item.path) +
-          '" data-name="' +
-          escapeAttr(item.name) +
-          '">Rename</button>' +
-          '<button class="btn btn-sm btn-danger delete-btn" data-path="' +
-          escapeAttr(item.path) +
-          '" data-name="' +
-          escapeAttr(item.name) +
-          '">Del</button>' +
-          (pub
-            ? '<button class="btn btn-sm btn-publish pub-link-btn" data-path="' +
-              escapeAttr(item.path) +
-              '">Link</button>'
-            : '<button class="btn btn-sm publish-btn" data-path="' +
-              escapeAttr(item.path) +
-              '">Publish</button>') +
-          "</div></td></tr>"
-        );
-      })
-      .join("");
-
-    fileTbody.querySelectorAll(".row-checkbox").forEach(function (cb) {
-      cb.addEventListener("change", function () {
-        toggleSelect(cb.dataset.path);
-      });
-    });
-    fileTbody.querySelectorAll("a[data-path]").forEach(function (a) {
-      a.addEventListener("click", function (ev) {
-        ev.preventDefault();
-        navigateTo(a.dataset.path);
-      });
-    });
-    fileTbody.querySelectorAll(".rename-btn").forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        openRenameModal(btn.dataset.path, btn.dataset.name);
-      });
-    });
-    fileTbody.querySelectorAll(".delete-btn").forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        openDeleteModal(btn.dataset.path, btn.dataset.name);
-      });
-    });
-    fileTbody.querySelectorAll(".publish-btn").forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        publishPath(btn.dataset.path);
-      });
-    });
-    fileTbody
-      .querySelectorAll(".pub-link-btn, .pub-badge")
-      .forEach(function (el) {
-        el.addEventListener("click", function () {
-          openPublishModal(el.dataset.path);
-        });
-      });
-
-    updateSelectAllCheckbox();
-    renderSortArrows();
-    renderPagination();
-  }
-
-  function renderPagination() {
-    var data = state.listData;
-    if (!data || data.total === 0) {
-      prevBtn.disabled = true;
-      nextBtn.disabled = true;
-      pageInfo.textContent = "";
-      return;
-    }
-    var totalPages = Math.ceil(data.total / data.pageSize);
-    prevBtn.disabled = state.page <= 1;
-    nextBtn.disabled = state.page >= totalPages;
-    pageInfo.textContent =
-      "Page " +
-      state.page +
-      " of " +
-      totalPages +
-      " (" +
-      data.total +
-      " items)";
-  }
-
-  document.querySelectorAll(".sortable").forEach(function (th) {
-    th.addEventListener("click", function () {
-      var field = th.dataset.sort;
-      if (state.sort === field)
-        state.direction = state.direction === "asc" ? "desc" : "asc";
-      else {
-        state.sort = field;
-        state.direction = "asc";
-      }
-      state.page = 1;
-      clearSelection();
-      loadFiles();
-    });
-  });
-
-  function renderSortArrows() {
-    document.querySelectorAll(".sort-arrow").forEach(function (el) {
-      el.classList.remove("asc", "desc");
-    });
-    var active = document.querySelector(
-      'th[data-sort="' + state.sort + '"] .sort-arrow',
-    );
-    if (active) active.classList.add(state.direction);
-    }
-
-    // Mobile sort dropdown
-    var mobileSort = $('#mobile-sort');
-    if (mobileSort) {
-      mobileSort.addEventListener('change', function () {
-        var parts = mobileSort.value.split('-');
-        state.sort = parts[0];
-        state.direction = parts[1];
-        state.page = 1;
-        clearSelection();
-        loadFiles();
-      });
-    }
-
-    prevBtn.addEventListener("click", function () {
-    if (state.page > 1) {
-      state.page--;
-      clearSelection();
-      loadFiles();
-    }
-  });
-  nextBtn.addEventListener("click", function () {
-    var totalPages = Math.ceil(
-      ((state.listData && state.listData.total) || 0) / state.pageSize,
-    );
-    if (state.page < totalPages) {
-      state.page++;
-      clearSelection();
-      loadFiles();
-    }
-  });
-
-  // ---- Upload ----
-  var uploadInput = $("#upload-input");
-  $("#upload-btn").addEventListener("click", function () {
-    uploadInput.click();
-  });
-  uploadInput.addEventListener("change", function () {
-    doUpload(uploadInput.files);
-  });
-
-  // ---- Drag and drop ----
-  var dragCounter = 0;
-  function isAppVisible() {
-    return !appScreen.classList.contains("hidden");
-  }
-  function anyModalOpen() {
-    return (
-      !$("#folder-modal").classList.contains("hidden") ||
-      !$("#rename-modal").classList.contains("hidden") ||
-      !$("#delete-modal").classList.contains("hidden") ||
-      !$("#publish-modal").classList.contains("hidden")
-    );
-  }
-
-  appScreen.addEventListener("dragenter", function (e) {
-    if (!isAppVisible() || anyModalOpen()) return;
-    e.preventDefault();
-    dragCounter++;
-    if (dragCounter === 1) dropOverlay.classList.remove("hidden");
-  });
-  appScreen.addEventListener("dragleave", function (e) {
-    if (!isAppVisible()) return;
-    e.preventDefault();
-    dragCounter--;
-    if (dragCounter === 0) dropOverlay.classList.add("hidden");
-  });
-  appScreen.addEventListener("dragover", function (e) {
-    if (!isAppVisible() || anyModalOpen()) return;
-    e.preventDefault();
-  });
-  appScreen.addEventListener("drop", function (e) {
-    if (!isAppVisible() || anyModalOpen()) return;
-    e.preventDefault();
-    dragCounter = 0;
-    dropOverlay.classList.add("hidden");
-    if (e.dataTransfer.files.length > 0) doUpload(e.dataTransfer.files);
-  });
-
-  async function doUpload(files) {
-    if (!files || files.length === 0) return;
-    hideError();
-    var progressEl = showUploadProgress(files.length);
-    var fd = new FormData();
-    for (var i = 0; i < files.length; i++) fd.append("files", files[i]);
-    try {
-      var res = await fetch(
-        "/api/files/upload?path=" + encodeURIComponent(state.currentPath),
-        { method: "POST", body: fd },
-      );
-      var data = await res.json();
-      if (!res.ok)
-        throw new Error(
-          (data && data.error && data.error.message) || "Upload failed",
-        );
-      if (data.files) updateUploadProgress(progressEl, data.files);
-    } catch (err) {
-      showError("Upload: " + err.message);
-      if (progressEl) progressEl.remove();
-    }
-    uploadInput.value = "";
-    loadFiles();
-  }
-
-  function showUploadProgress(total) {
-    var el = document.createElement("div");
-    el.className = "upload-progress";
-    el.innerHTML =
-      "<h3>Uploading " +
-      total +
-      ' file(s)...</h3><div class="bar"><div class="bar-fill" style="width:0%"></div></div>';
-    document.body.appendChild(el);
-    setTimeout(function () {
-      var bar = el.querySelector(".bar-fill");
-      if (bar) {
-        bar.style.transition = "width 30s linear";
-        bar.style.width = "90%";
-      }
-    }, 100);
-    return el;
-  }
-
-  function updateUploadProgress(el, files) {
-    var total = files.length;
-    var ok = 0,
-      err = 0;
-    files.forEach(function (f) {
-      if (f.status === "ok") ok++;
-      else err++;
-    });
-    var pct = Math.round(((ok + err) / total) * 100);
-    var bar = el.querySelector(".bar-fill");
-    if (bar) {
-      bar.style.transition = "width 0.3s ease";
-      bar.style.width = pct + "%";
-    }
-    var html = "<h3>Uploaded " + (ok + err) + " of " + total + "</h3>";
-    files.forEach(function (f) {
-      var cls = f.status === "ok" ? "ok" : "err",
-        icon = f.status === "ok" ? "✓" : "✗";
-      html +=
-        '<div class="file-item"><span>' +
-        icon +
-        " " +
-        escapeHtml(f.name) +
-        '</span><span class="' +
-        cls +
-        '">' +
-        (f.status === "ok" ? formatSize(f.size || 0) : f.message || "error") +
-        "</span></div>";
-    });
-    html +=
-      '<div class="bar"><div class="bar-fill" style="width:' +
-      pct +
-      '%"></div></div>';
-    el.innerHTML = html;
-    setTimeout(function () {
-      el.remove();
-    }, 4000);
-  }
-
-  // ---- Modals ----
-  var folderModal = $("#folder-modal"),
-    folderInput = $("#folder-name-input");
-  $("#create-folder-btn").addEventListener("click", function () {
-    folderModal.classList.remove("hidden");
-    folderInput.value = "";
-    folderInput.focus();
-  });
-  $("#folder-cancel").addEventListener("click", function () {
-    folderModal.classList.add("hidden");
-  });
-  $("#folder-confirm").addEventListener("click", async function () {
-    var n = folderInput.value.trim();
-    if (!n) return;
-    try {
-      await api("POST", "/api/files/folder", {
-        path: state.currentPath,
-        name: n,
-      });
-      folderModal.classList.add("hidden");
-      hideError();
-      loadFiles();
-    } catch (err) {
-      showError(err.message);
-    }
-  });
-  folderInput.addEventListener("keydown", function (e) {
-    if (e.key === "Enter") $("#folder-confirm").click();
-    if (e.key === "Escape") folderModal.classList.add("hidden");
-  });
-
-  var renameModal = $("#rename-modal"),
-    renameInput = $("#rename-input"),
-    renameTarget = "";
-  function openRenameModal(p, name) {
-    renameTarget = p;
-    renameInput.value = name;
-    renameModal.classList.remove("hidden");
-    renameInput.focus();
-  }
-  $("#rename-cancel").addEventListener("click", function () {
-    renameModal.classList.add("hidden");
-  });
-  $("#rename-confirm").addEventListener("click", async function () {
-    var n = renameInput.value.trim();
-    if (!n) return;
-    try {
-      await api("PATCH", "/api/files/rename", {
-        path: renameTarget,
-        newName: n,
-      });
-      renameModal.classList.add("hidden");
-      hideError();
-      loadFiles();
-    } catch (err) {
-      showError(err.message);
-    }
-  });
-  renameInput.addEventListener("keydown", function (e) {
-    if (e.key === "Enter") $("#rename-confirm").click();
-    if (e.key === "Escape") renameModal.classList.add("hidden");
-  });
-
-  var deleteModal = $("#delete-modal"),
-    deleteNameEl = $("#delete-name"),
-    deleteTarget = "";
-  function openDeleteModal(p, name) {
-    deleteTarget = p;
-    deleteNameEl.textContent = name;
-    deleteModal.classList.remove("hidden");
-  }
-  $("#delete-cancel").addEventListener("click", function () {
-    deleteModal.classList.add("hidden");
-  });
-  $("#delete-confirm").addEventListener("click", async function () {
-    try {
-      await api(
-        "DELETE",
-        "/api/files?path=" + encodeURIComponent(deleteTarget),
-      );
-      deleteModal.classList.add("hidden");
-      hideError();
-      if (state.listData && state.listData.items.length === 1 && state.page > 1)
-        state.page--;
-      loadFiles();
-    } catch (err) {
-      showError(err.message);
-    }
-  });
-
-  async function publishPath(p) {
-    try {
-      await api("POST", "/api/files/publish", { path: p });
-      await loadPublished();
-      renderFiles();
-      openPublishModal(p);
-    } catch (err) {
-      showError(err.message);
-    }
-  }
-
-  var publishModal = $("#publish-modal"),
-    publishUrlInput = $("#publish-url-input"),
-    publishPathEl = $("#publish-path");
-  var publishRevokeBtn = $("#publish-revoke-btn"),
-    curPubPath = "";
-  function openPublishModal(p) {
-    curPubPath = p;
-    publishPathEl.textContent = p;
-    var pub = isPublished(p);
-    if (pub) {
-      publishUrlInput.value = window.location.origin + "/pub" + p;
-      publishRevokeBtn.classList.remove("hidden");
-    } else {
-      publishUrlInput.value = "(not published)";
-      publishRevokeBtn.classList.add("hidden");
-    }
-    publishModal.classList.remove("hidden");
-  }
-  $("#publish-close").addEventListener("click", function () {
-    publishModal.classList.add("hidden");
-  });
-  $("#publish-revoke-btn").addEventListener("click", async function () {
-    try {
-      await api("DELETE", "/api/files/publish", { path: curPubPath });
-      publishModal.classList.add("hidden");
-      hideError();
-      await loadPublished();
-      renderFiles();
-    } catch (err) {
-      showError(err.message);
-    }
-  });
-  $("#publish-copy-btn").addEventListener("click", function () {
-    publishUrlInput.select();
-    document.execCommand("copy");
-    var b = $("#publish-copy-btn");
-    b.textContent = "Copied!";
-    setTimeout(function () {
-      b.textContent = "Copy";
-    }, 1500);
-  });
-
-  $("#refresh-btn").addEventListener("click", function () {
-    loadFiles();
-  });
-
-  function showError(msg) {
-    errorBanner.textContent = msg;
-    errorBanner.classList.remove("hidden");
-  }
-  function hideError() {
-    errorBanner.classList.add("hidden");
-  }
-
-  function formatSize(bytes) {
-    if (bytes < 1024) return bytes + " B";
-    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + " KB";
-    if (bytes < 1073741824) return (bytes / 1048576).toFixed(1) + " MB";
-    return (bytes / 1073741824).toFixed(1) + " GB";
-  }
-  function formatDate(iso) {
-    var d = new Date(iso);
-    return (
-      d.toLocaleDateString("en-US", {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-      }) +
-      " " +
-      d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })
-    );
-  }
-  function escapeHtml(str) {
-    var div = document.createElement("div");
-    div.textContent = str;
-    return div.innerHTML;
-  }
-  function escapeAttr(str) {
-    return String(str)
-      .replace(/&/g, "&amp;")
-      .replace(/"/g, "&quot;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
-  }
-
-  document.querySelectorAll(".modal-backdrop").forEach(function (bd) {
-    bd.addEventListener("click", function () {
-      folderModal.classList.add("hidden");
-      renameModal.classList.add("hidden");
-      deleteModal.classList.add("hidden");
-      publishModal.classList.add("hidden");
-    });
-  });
-
-  function showLogin() {
-    loginScreen.classList.remove("hidden");
-    appScreen.classList.add("hidden");
-  }
-  async function showApp() {
-    loginScreen.classList.add("hidden");
-    appScreen.classList.remove("hidden");
-    currentUser.textContent = state.user.username;
-    state.currentPath = "/";
-    state.page = 1;
-    buildBreadcrumbs();
-    await loadFiles();
-  }
-
-  (async function init() {
-    try {
-      var d = await api("GET", "/api/auth/me");
-      state.user = d.user;
-      showApp();
-    } catch (e) {
-      showLogin();
-    }
-  })();
+  (async function init() { try { var d = await api('GET', '/api/auth/me'); state.user = d.user; showApp(); } catch (e) { showLogin(); } })();
 })();

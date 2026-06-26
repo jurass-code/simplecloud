@@ -62,6 +62,34 @@ class UserStore {
   hasUsers() {
     return this.users.length > 0;
   }
+
+  getAll() {
+    return [...this.users];
+  }
+
+  updateRole(id, role) {
+    const user = this.findById(id);
+    if (!user) return false;
+    user.role = role;
+    this._save();
+    return true;
+  }
+
+  deleteUser(id) {
+    const idx = this.users.findIndex((u) => u.id === id);
+    if (idx === -1) return false;
+    this.users.splice(idx, 1);
+    this._save();
+    return true;
+  }
+
+  changePassword(id, newPassword) {
+    const user = this.findById(id);
+    if (!user) return false;
+    user.passwordHash = hashPassword(newPassword);
+    this._save();
+    return true;
+  }
 }
 
 module.exports = { UserStore };

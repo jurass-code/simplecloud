@@ -702,6 +702,75 @@ body {
     transition: width 0.3s ease;
 }
 
+/* ==================== ADMIN PANEL ==================== */
+
+.admin-section {
+  background: var(--surface-card);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-subtle);
+  padding: var(--space-20);
+  margin-bottom: var(--space-16);
+}
+
+.admin-section h2 {
+  font-size: 18px;
+  font-weight: 400;
+  letter-spacing: -0.005em;
+  margin-bottom: var(--space-16);
+  color: var(--color-espresso-ink);
+}
+
+.admin-create-form {
+  display: flex;
+  gap: var(--space-8);
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.admin-create-form input {
+  padding: var(--space-8) var(--space-12);
+  background: var(--surface-parchment);
+  border: 1px solid var(--color-border-sand);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  letter-spacing: 0.01em;
+  color: var(--color-espresso-ink);
+  min-width: 140px;
+  flex: 1;
+}
+
+.admin-create-form input:focus {
+  outline: none;
+  border-color: var(--color-muted-clay);
+}
+
+.admin-create-form select {
+  padding: var(--space-8) var(--space-12);
+  background: var(--surface-parchment);
+  border: 1px solid var(--color-border-sand);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  letter-spacing: 0.01em;
+  color: var(--color-espresso-ink);
+  cursor: pointer;
+}
+
+.admin-create-form select:focus {
+  outline: none;
+  border-color: var(--color-muted-clay);
+}
+
+.admin-section .file-table td {
+  font-size: 13px;
+}
+
+.admin-section .error-banner {
+  margin-top: var(--space-8);
+  margin-bottom: 0;
+}
+
 /* ==================== RESPONSIVE ==================== */
 
 /* Tablet */
@@ -893,4 +962,26 @@ body {
         padding: var(--space-6) var(--space-8);
         font-size: 12px;
     }
+}
+
+.admin-role-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+.admin-role-badge.admin { background: var(--color-espresso-ink); color: var(--surface-parchment); }
+.admin-role-badge.user { background: var(--surface-highlight); color: var(--color-muted-clay); }
+
+@media (max-width: 600px) {
+  .admin-create-form { flex-direction: column; }
+  .admin-create-form input, .admin-create-form select { min-width: 0; width: 100%; }
+}
+
+.error-banner.success {
+  background: #d1fae5;
+  color: var(--color-deep-moss);
+  border-color: #a7f3d0;
 }
