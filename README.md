@@ -44,6 +44,7 @@ npm run create-admin -- myuser mypassword admin
 | `SESSION_TTL_HOURS` | `24` | Время жизни сессии в часах |
 | `MAX_UPLOAD_MB` | `100` | Максимальный размер загрузки в МБ |
 | `ADMIN_PASSWORD` | `password` | Пароль админа при первом запуске |
+| `UV_THREADPOOL_SIZE` | `4` | Размер libuv threadpool (fs.stat, crypto). Поднять до 8–16 на слабом хостинге для параллельного stat при листинге больших папок |
 
 ## HTTP API
 
