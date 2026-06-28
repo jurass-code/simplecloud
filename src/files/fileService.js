@@ -125,23 +125,31 @@ class FileService {
 
     const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
 
-    // stat every entry in parallel (bounded) instead of sequentially — the old
-    // loop awaited one stat at a time, which dominated latency on big dirs.
-    const stats = await statMany(dirPath, entries);
-
+    // readdir's Dirent already carries name + type (folder/file) — that's enough
+    // to sort by name or type. We only need per-file stat for size/mtime, which
+    // matters in two places: sorting by size/modifiedAt, and the size/date shown
+    // for the returned page. So the common case (sort by name) stats ONLY the 50
+    // page items, not every entry in the directory.
+    const needsStatAll = sort === "size" || sort === "modifiedAt";
     const dir = direction === "asc" ? 1 : -1;
-    // Build lightweight sort keys once; compute the user-visible path only for
-    // the page we return, not for all entries.
-    const keyed = entries.map((entry, i) => {
-      const st = stats[i];
-      const isFolder = entry.isDirectory();
-      return {
-        name: entry.name,
-        isFolder,
-        size: isFolder ? 0 : st ? st.size : 0,
-        mtimeMs: st ? st.mtimeMs : 0,
-      };
-    });
+
+    const keyed = entries.map((entry) => ({
+      name: entry.name,
+      isFolder: entry.isDirectory(),
+      size: 0,
+      mtimeMs: 0,
+    }));
+
+    if (needsStatAll) {
+      const stats = await statMany(dirPath, entries);
+      for (let i = 0; i < keyed.length; i++) {
+        const st = stats[i];
+        if (st) {
+          keyed[i].size = keyed[i].isFolder ? 0 : st.size;
+          keyed[i].mtimeMs = st.mtimeMs;
+        }
+      }
+    }
 
     keyed.sort((a, b) => {
       if (sort === "name") {
@@ -163,6 +171,19 @@ class FileService {
     const total = keyed.length;
     const start = (safePage - 1) * safePageSize;
     const pageItems = keyed.slice(start, start + safePageSize);
+
+    // For name/type sort we didn't stat the whole dir — stat just the page now
+    // so size/modifiedAt are filled in for display.
+    if (!needsStatAll && pageItems.length) {
+      const stats = await statMany(dirPath, pageItems);
+      for (let i = 0; i < pageItems.length; i++) {
+        const st = stats[i];
+        if (st) {
+          pageItems[i].size = pageItems[i].isFolder ? 0 : st.size;
+          pageItems[i].mtimeMs = st.mtimeMs;
+        }
+      }
+    }
 
     const items = pageItems.map((k) => ({
       name: k.name,
