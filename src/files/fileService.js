@@ -1,7 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const { ApiError, ErrorCodes } = require("../shared/errors");
-const { resolveStoragePath, toUserPath, isValidName } = require("./pathSafety");
+const { resolveStoragePath, toUserPath, isValidName, statMany } = require("./pathSafety");
 
 class FileService {
   // rootDir is the true storage root; a scoped service keeps rootDir so it can
@@ -125,34 +125,33 @@ class FileService {
 
     const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
 
-    const items = [];
-    for (const entry of entries) {
-      let itemStat;
-      try {
-        itemStat = await fs.promises.stat(path.join(dirPath, entry.name));
-      } catch {
-        continue;
-      }
-
-      items.push({
-        name: entry.name,
-        path: toUserPath(path.join(dirPath, entry.name), this.storageDir),
-        type: entry.isDirectory() ? "folder" : "file",
-        size: entry.isDirectory() ? 0 : itemStat.size,
-        modifiedAt: itemStat.mtime.toISOString(),
-      });
-    }
+    // stat every entry in parallel (bounded) instead of sequentially — the old
+    // loop awaited one stat at a time, which dominated latency on big dirs.
+    const stats = await statMany(dirPath, entries);
 
     const dir = direction === "asc" ? 1 : -1;
-    items.sort((a, b) => {
+    // Build lightweight sort keys once; compute the user-visible path only for
+    // the page we return, not for all entries.
+    const keyed = entries.map((entry, i) => {
+      const st = stats[i];
+      const isFolder = entry.isDirectory();
+      return {
+        name: entry.name,
+        isFolder,
+        size: isFolder ? 0 : st ? st.size : 0,
+        mtimeMs: st ? st.mtimeMs : 0,
+      };
+    });
+
+    keyed.sort((a, b) => {
       if (sort === "name") {
-        if (a.type !== b.type) return a.type === "folder" ? -dir : dir;
+        if (a.isFolder !== b.isFolder) return a.isFolder ? -dir : dir;
         return a.name.localeCompare(b.name) * dir;
       }
       if (sort === "size") return (a.size - b.size) * dir;
-      if (sort === "modifiedAt")
-        return (new Date(a.modifiedAt) - new Date(b.modifiedAt)) * dir;
-      if (sort === "type") return a.type.localeCompare(b.type) * dir;
+      if (sort === "modifiedAt") return (a.mtimeMs - b.mtimeMs) * dir;
+      if (sort === "type")
+        return (a.isFolder ? "folder" : "file").localeCompare(b.isFolder ? "folder" : "file") * dir;
       return 0;
     });
 
@@ -161,15 +160,24 @@ class FileService {
       200,
       Math.max(10, parseInt(pageSize, 10) || 50),
     );
-    const total = items.length;
+    const total = keyed.length;
     const start = (safePage - 1) * safePageSize;
+    const pageItems = keyed.slice(start, start + safePageSize);
+
+    const items = pageItems.map((k) => ({
+      name: k.name,
+      path: toUserPath(path.join(dirPath, k.name), this.storageDir),
+      type: k.isFolder ? "folder" : "file",
+      size: k.size,
+      modifiedAt: new Date(k.mtimeMs).toISOString(),
+    }));
 
     return {
       path: userPath || "/",
       page: safePage,
       pageSize: safePageSize,
       total,
-      items: items.slice(start, start + safePageSize),
+      items,
     };
   }
 
