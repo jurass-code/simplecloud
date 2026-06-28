@@ -6,12 +6,12 @@ const { ApiError, ErrorCodes } = require("../shared/errors");
 const { asyncRoute } = require("../shared/asyncRoute");
 const { isValidName } = require("./pathSafety");
 
-function createFileRoutes(fileService, publicStore) {
+function createFileRoutes(rootFileService, publicStore) {
   const router = Router();
 
   const upload = multer({
     dest: path.join(os.tmpdir(), "simplecloud-uploads"),
-    limits: { fileSize: fileService.maxUploadBytes, files: 50 },
+    limits: { fileSize: rootFileService.maxUploadBytes, files: 50 },
     fileFilter(_req, file, cb) {
       if (!isValidName(file.originalname)) {
         cb(
@@ -27,10 +27,16 @@ function createFileRoutes(fileService, publicStore) {
     },
   });
 
+  // Per-request scoped view: admins see the whole storage, everyone else is
+  // confined to data/homes/<username> by resolveStoragePath containment.
+  function svc(req) {
+    return rootFileService.scopeForUser(req.user);
+  }
+
   router.get(
     "/",
     asyncRoute(async (req, res) => {
-      const result = await fileService.list(req.query.path, {
+      const result = await svc(req).list(req.query.path, {
         page: req.query.page,
         pageSize: req.query.pageSize,
         sort: req.query.sort || "name",
@@ -43,7 +49,7 @@ function createFileRoutes(fileService, publicStore) {
   router.get(
     "/download",
     asyncRoute(async (req, res) => {
-      const { filename, stream, size } = await fileService.download(
+      const { filename, stream, size } = await svc(req).download(
         req.query.path,
       );
       res.setHeader(
@@ -72,10 +78,11 @@ function createFileRoutes(fileService, publicStore) {
       }
       const overwrite = req.query.overwrite === "true";
       const userPath = req.query.path || "/";
+      const s = svc(req);
       const results = [];
       for (const f of req.files) {
         try {
-          const r = await fileService.uploadFromTemp(
+          const r = await s.uploadFromTemp(
             userPath,
             f.path,
             f.originalname,
@@ -110,7 +117,7 @@ function createFileRoutes(fileService, publicStore) {
           400,
         );
       }
-      const result = await fileService.createFolder(userPath || "/", name);
+      const result = await svc(req).createFolder(userPath || "/", name);
       res.status(201).json(result);
     }),
   );
@@ -126,7 +133,7 @@ function createFileRoutes(fileService, publicStore) {
           400,
         );
       }
-      const result = await fileService.rename(userPath, newName);
+      const result = await svc(req).rename(userPath, newName);
       res.json(result);
     }),
   );
@@ -134,7 +141,7 @@ function createFileRoutes(fileService, publicStore) {
   router.delete(
     "/",
     asyncRoute(async (req, res) => {
-      const result = await fileService.delete(req.query.path);
+      const result = await svc(req).delete(req.query.path);
       res.json(result);
     }),
   );
@@ -151,10 +158,11 @@ function createFileRoutes(fileService, publicStore) {
           400,
         );
       }
+      const s = svc(req);
       const results = [];
       for (const p of paths) {
         try {
-          await fileService.delete(p);
+          await s.delete(p);
           results.push({ path: p, status: "ok" });
         } catch (err) {
           results.push({ path: p, status: "error", message: err.message });
@@ -175,7 +183,7 @@ function createFileRoutes(fileService, publicStore) {
           400,
         );
       }
-      const result = await fileService.move(sourcePath, destPath);
+      const result = await svc(req).move(sourcePath, destPath);
       res.json(result);
     }),
   );
@@ -198,12 +206,16 @@ function createFileRoutes(fileService, publicStore) {
           403,
         );
       }
-      const stat = await fileService.stat(userPath);
-      const entry = publicStore.publish(userPath, stat.type);
+      const s = svc(req);
+      const stat = await s.stat(userPath);
+      // publicStore and /pub operate on root-relative paths; translate from
+      // the user's home-relative view so the link resolves correctly.
+      const rootPath = s.toRootUserPath(userPath);
+      const entry = publicStore.publish(rootPath, stat.type);
       res
         .status(201)
         .json({
-          path: entry.path,
+          path: userPath,
           type: entry.type,
           publicUrl: "/pub" + entry.path,
         });
@@ -221,7 +233,8 @@ function createFileRoutes(fileService, publicStore) {
           400,
         );
       }
-      const ok = publicStore.unpublish(userPath);
+      const rootPath = svc(req).toRootUserPath(userPath);
+      const ok = publicStore.unpublish(rootPath);
       if (!ok) {
         throw new ApiError(
           ErrorCodes.FILE_NOT_FOUND.code,
@@ -235,8 +248,18 @@ function createFileRoutes(fileService, publicStore) {
 
   router.get(
     "/published",
-    asyncRoute(async (_req, res) => {
-      res.json(publicStore.getAll());
+    asyncRoute(async (req, res) => {
+      const s = svc(req);
+      // Only show this user's own published links. Non-admins get paths
+      // translated back to their home-relative view; admins see all as-is.
+      const items = publicStore.getAll()
+        .map(function (entry) {
+          const homePath = s.fromRootUserPath(entry.path);
+          if (homePath === null) return null;
+          return { path: homePath, type: entry.type, createdAt: entry.createdAt };
+        })
+        .filter(Boolean);
+      res.json(items);
     }),
   );
 

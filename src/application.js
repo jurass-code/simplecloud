@@ -26,6 +26,14 @@ function createPublicRouter(publicStore, storageDir) {
     const realPath = subpath ? entry.path + '/' + subpath : entry.path;
     const absolutePath = resolveStoragePath(realPath, storageDir);
 
+    // Containment: a published link must not escape its own entry via traversal
+    // (e.g. /pub/homes/alice/docs/../../bob). Without this, a published folder
+    // could leak into other users' homes now that homes live under storage root.
+    const entryAbs = resolveStoragePath(entry.path, storageDir);
+    if (absolutePath !== entryAbs && !absolutePath.startsWith(entryAbs + path.sep)) {
+      throw new ApiError(ErrorCodes.FORBIDDEN_PATH.code, 'Path is outside published entry', 403);
+    }
+
     let stat;
     try { stat = await fs.promises.stat(absolutePath); }
     catch (err) { if (err.code === 'ENOENT') throw new ApiError(ErrorCodes.FILE_NOT_FOUND.code, 'File not found', 404); throw err; }
@@ -94,6 +102,9 @@ function createApp(config) {
     if (!username || !password) throw new ApiError(ErrorCodes.INVALID_REQUEST.code, 'Username and password are required', 400);
     const user = userStore.verifyCredentials(username, password);
     if (!user) throw new ApiError(ErrorCodes.UNAUTHORIZED.code, 'Invalid username or password', 401);
+    // Provision the user's home directory before issuing a session so the
+    // sandboxed file view has a root to operate in.
+    await fileService.ensureHome(user);
     const sessionId = sessionStore.create(user);
     res.cookie(config.cookieName, sessionId, { httpOnly: true, sameSite: 'lax', secure: config.isProduction, maxAge: config.sessionTtlHours * 60 * 60 * 1000, path: '/' });
     res.json({ user: { id: user.id, username: user.username, role: user.role } });

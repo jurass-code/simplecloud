@@ -258,6 +258,64 @@ async function run() {
   res = await request('GET', '/api/admin/users');
   check('user gone', res.body && res.body.users && !res.body.users.some(function (u) { return u.username === 'john'; }));
 
+  // === USER SANDBOX TESTS ===
+  // ponytail: one runnable check per non-trivial security path — confinement + cross-user isolation.
+
+  // 29. Create two non-admin users
+  console.log('\n29. Create sandbox users');
+  res = await request('POST', '/api/admin/users', { body: { username: 'alice', password: 'pass1234', role: 'user' } });
+  check('alice 201', res.status === 201, JSON.stringify(res.body));
+  res = await request('POST', '/api/admin/users', { body: { username: 'bob', password: 'pass1234', role: 'user' } });
+  check('bob 201', res.status === 201, JSON.stringify(res.body));
+
+  // 30. Alice uploads to her own root; bob cannot see it
+  console.log('\n30. Per-user isolation');
+  res = await request('POST', '/api/auth/login', { body: { username: 'alice', password: 'pass1234' } });
+  check('alice login', res.body && res.body.user && res.body.user.username === 'alice', JSON.stringify(res.body));
+  var aliceCookie = cookie;
+  var ab = '----Ab', abBody = Buffer.concat([
+    Buffer.from('--' + ab + '\r\nContent-Disposition: form-data; name="files"; filename="secret.txt"\r\nContent-Type: text/plain\r\n\r\nalice secret\r\n--' + ab + '--\r\n'),
+  ]);
+  res = await request('POST', '/api/files/upload?path=/', { body: abBody, headers: { 'Content-Type': 'multipart/form-data; boundary=' + ab } });
+  check('alice upload 201', res.status === 201, JSON.stringify(res.body));
+  res = await request('GET', '/api/files?path=/');
+  check('alice sees own file', res.body && res.body.items && res.body.items.some(function (i) { return i.name === 'secret.txt'; }), JSON.stringify(res.body));
+
+  // bob logs in, must NOT see alice's file
+  res = await request('POST', '/api/auth/login', { body: { username: 'bob', password: 'pass1234' } });
+  check('bob login', res.body && res.body.user && res.body.user.username === 'bob', JSON.stringify(res.body));
+  var bobCookie = cookie;
+  res = await request('GET', '/api/files?path=/');
+  check('bob root empty of alice files', !res.body.items.some(function (i) { return i.name === 'secret.txt'; }), JSON.stringify(res.body));
+
+  // 31. Path traversal blocked — alice cannot escape to homes/bob
+  console.log('\n31. Sandbox traversal blocked');
+  res = await request('GET', '/api/files?path=../../../etc');
+  check('traversal 403', res.status === 403);
+  res = await request('GET', '/api/files/download?path=/../bob/secret.txt');
+  check('cross-user download blocked', res.status === 403 || res.status === 404, 'got ' + res.status);
+  res = await request('GET', '/api/files?path=/homes/bob');
+  check('homes path not leaking', res.status === 404 || res.status === 403, 'got ' + res.status);
+
+  // 32. Alice can download her own file
+  console.log('\n32. Own file access works');
+  cookie = aliceCookie;
+  res = await request('GET', '/api/files/download?path=/secret.txt');
+  check('alice downloads own', res.status === 200 && res.raw === 'alice secret', 'got ' + res.status + ': ' + res.raw);
+
+  // 33. Admin still sees everything (homes folder visible)
+  console.log('\n33. Admin sees all');
+  cookie = adminCookie;
+  res = await request('GET', '/api/files?path=/homes/alice');
+  check('admin sees alice home', res.status === 200 && res.body.items.some(function (i) { return i.name === 'secret.txt'; }), JSON.stringify(res.body));
+
+  // cleanup sandbox users + their homes
+  cookie = adminCookie;
+  await request('DELETE', '/api/files?path=/homes/alice');
+  await request('DELETE', '/api/files?path=/homes/bob');
+  await request('DELETE', '/api/admin/users/alice');
+  await request('DELETE', '/api/admin/users/bob');
+
   console.log('\n' + '='.repeat(40));
   console.log('Results: ' + passed + ' passed, ' + failed + ' failed, ' + (passed + failed) + ' total');
   if (failed > 0) process.exit(1);

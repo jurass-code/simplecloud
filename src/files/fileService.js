@@ -4,9 +4,70 @@ const { ApiError, ErrorCodes } = require("../shared/errors");
 const { resolveStoragePath, toUserPath, isValidName } = require("./pathSafety");
 
 class FileService {
-  constructor(storageDir, maxUploadBytes) {
+  // rootDir is the true storage root; a scoped service keeps rootDir so it can
+  // translate between home-relative paths (what the user sees) and root-relative
+  // paths (what /pub and publicStore use). For the root service rootDir === storageDir.
+  constructor(storageDir, maxUploadBytes, rootDir) {
     this.storageDir = storageDir;
     this.maxUploadBytes = maxUploadBytes;
+    this.rootDir = rootDir || storageDir;
+  }
+
+  // Return a view of the file service rooted at a per-user home directory.
+  // Containment in resolveStoragePath then confines every operation to that
+  // home, which is the whole sandboxing mechanism for non-admin users.
+  scoped(homeDir) {
+    return new FileService(homeDir, this.maxUploadBytes, this.rootDir);
+  }
+
+  // Root service view for a user: admins see the whole storage, everyone else
+  // is sandboxed to data/homes/<username>. Called on the root fileService.
+  scopeForUser(user) {
+    if (user.role === 'admin') return this;
+    if (!isValidName(user.username)) {
+      throw new ApiError(
+        ErrorCodes.INVALID_REQUEST.code,
+        'Invalid username for home directory',
+        400,
+      );
+    }
+    return this.scoped(path.join(this.rootDir, 'homes', user.username));
+  }
+
+  // Lazily create a non-admin's home directory. Idempotent; called on login.
+  async ensureHome(user) {
+    if (user.role === 'admin') return;
+    if (!isValidName(user.username)) {
+      throw new ApiError(
+        ErrorCodes.INVALID_REQUEST.code,
+        'Invalid username for home directory',
+        400,
+      );
+    }
+    await fs.promises.mkdir(
+      path.join(this.rootDir, 'homes', user.username),
+      { recursive: true },
+    );
+  }
+
+  // Translate a home-relative user path into a root-relative path (for publicStore / /pub).
+  toRootUserPath(userPath) {
+    const abs = resolveStoragePath(userPath, this.storageDir);
+    return toUserPath(abs, this.rootDir);
+  }
+
+  // Translate a root-relative path into this scope's home-relative path.
+  // Returns null if the path lies outside this scope (e.g. another user's home).
+  fromRootUserPath(rootUserPath) {
+    let abs;
+    try {
+      abs = resolveStoragePath(rootUserPath, this.rootDir);
+    } catch {
+      return null;
+    }
+    const scope = path.resolve(this.storageDir);
+    if (abs !== scope && !abs.startsWith(scope + path.sep)) return null;
+    return toUserPath(abs, this.storageDir);
   }
 
   // ---------- stat ----------
