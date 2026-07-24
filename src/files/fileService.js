@@ -1,7 +1,12 @@
 const fs = require("fs");
 const path = require("path");
 const { ApiError, ErrorCodes } = require("../shared/errors");
-const { resolveStoragePath, toUserPath, isValidName, statMany } = require("./pathSafety");
+const {
+  resolveStoragePath,
+  toUserPath,
+  isValidName,
+  statMany,
+} = require("./pathSafety");
 
 class FileService {
   // rootDir is the true storage root; a scoped service keeps rootDir so it can
@@ -23,31 +28,30 @@ class FileService {
   // Root service view for a user: admins see the whole storage, everyone else
   // is sandboxed to data/homes/<username>. Called on the root fileService.
   scopeForUser(user) {
-    if (user.role === 'admin') return this;
+    if (user.role === "admin") return this;
     if (!isValidName(user.username)) {
       throw new ApiError(
         ErrorCodes.INVALID_REQUEST.code,
-        'Invalid username for home directory',
+        "Invalid username for home directory",
         400,
       );
     }
-    return this.scoped(path.join(this.rootDir, 'homes', user.username));
+    return this.scoped(path.join(this.rootDir, "homes", user.username));
   }
 
   // Lazily create a non-admin's home directory. Idempotent; called on login.
   async ensureHome(user) {
-    if (user.role === 'admin') return;
+    if (user.role === "admin") return;
     if (!isValidName(user.username)) {
       throw new ApiError(
         ErrorCodes.INVALID_REQUEST.code,
-        'Invalid username for home directory',
+        "Invalid username for home directory",
         400,
       );
     }
-    await fs.promises.mkdir(
-      path.join(this.rootDir, 'homes', user.username),
-      { recursive: true },
-    );
+    await fs.promises.mkdir(path.join(this.rootDir, "homes", user.username), {
+      recursive: true,
+    });
   }
 
   // Translate a home-relative user path into a root-relative path (for publicStore / /pub).
@@ -125,6 +129,9 @@ class FileService {
 
     const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
 
+    const HIDDEN = [".thumbnails", ".gitkeep"];
+    const visible = entries.filter((entry) => !HIDDEN.includes(entry.name));
+
     // readdir's Dirent already carries name + type (folder/file) — that's enough
     // to sort by name or type. We only need per-file stat for size/mtime, which
     // matters in two places: sorting by size/modifiedAt, and the size/date shown
@@ -133,7 +140,7 @@ class FileService {
     const needsStatAll = sort === "size" || sort === "modifiedAt";
     const dir = direction === "asc" ? 1 : -1;
 
-    const keyed = entries.map((entry) => ({
+    const keyed = visible.map((entry) => ({
       name: entry.name,
       isFolder: entry.isDirectory(),
       size: 0,
@@ -141,7 +148,7 @@ class FileService {
     }));
 
     if (needsStatAll) {
-      const stats = await statMany(dirPath, entries);
+      const stats = await statMany(dirPath, visible);
       for (let i = 0; i < keyed.length; i++) {
         const st = stats[i];
         if (st) {
@@ -159,7 +166,11 @@ class FileService {
       if (sort === "size") return (a.size - b.size) * dir;
       if (sort === "modifiedAt") return (a.mtimeMs - b.mtimeMs) * dir;
       if (sort === "type")
-        return (a.isFolder ? "folder" : "file").localeCompare(b.isFolder ? "folder" : "file") * dir;
+        return (
+          (a.isFolder ? "folder" : "file").localeCompare(
+            b.isFolder ? "folder" : "file",
+          ) * dir
+        );
       return 0;
     });
 

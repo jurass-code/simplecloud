@@ -2,7 +2,7 @@ const path = require("path");
 const fs = require("fs");
 
 function loadConfig() {
-  const port = parseInt(process.env.PORT, 10) || 3000;
+  const port = parseInt(process.env.PORT, 10) || 3001;
   const storageDir = path.resolve(process.env.STORAGE_DIR || "./data");
   const configDir = path.resolve(process.env.CONFIG_DIR || "./config");
   const sessionTtlHours = parseInt(process.env.SESSION_TTL_HOURS, 10) || 24;

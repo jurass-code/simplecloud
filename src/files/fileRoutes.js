@@ -6,7 +6,7 @@ const { ApiError, ErrorCodes } = require("../shared/errors");
 const { asyncRoute } = require("../shared/asyncRoute");
 const { isValidName } = require("./pathSafety");
 
-function createFileRoutes(rootFileService, publicStore) {
+function createFileRoutes(rootFileService, publicStore, thumbnailService) {
   const router = Router();
 
   const upload = multer({
@@ -58,6 +58,23 @@ function createFileRoutes(rootFileService, publicStore) {
       );
       res.setHeader("Content-Type", "application/octet-stream");
       res.setHeader("Content-Length", size);
+      stream.on("error", function () {
+        if (!res.headersSent) res.status(500).end();
+      });
+      stream.pipe(res);
+    }),
+  );
+
+  router.get(
+    "/thumbnail",
+    asyncRoute(async (req, res) => {
+      // Translate from home-relative to root-relative so the thumbnail cache
+      // is keyed against the real storage path (shared across users for admin).
+      const rootPath = svc(req).toRootUserPath(req.query.path);
+      const { stream, size } = await thumbnailService.serve(rootPath);
+      res.setHeader("Content-Type", "image/jpeg");
+      res.setHeader("Content-Length", size);
+      res.setHeader("Cache-Control", "public, max-age=86400, immutable");
       stream.on("error", function () {
         if (!res.headersSent) res.status(500).end();
       });
@@ -212,13 +229,11 @@ function createFileRoutes(rootFileService, publicStore) {
       // the user's home-relative view so the link resolves correctly.
       const rootPath = s.toRootUserPath(userPath);
       const entry = publicStore.publish(rootPath, stat.type);
-      res
-        .status(201)
-        .json({
-          path: userPath,
-          type: entry.type,
-          publicUrl: "/pub" + entry.path,
-        });
+      res.status(201).json({
+        path: userPath,
+        type: entry.type,
+        publicUrl: "/pub" + entry.path,
+      });
     }),
   );
 
@@ -252,11 +267,16 @@ function createFileRoutes(rootFileService, publicStore) {
       const s = svc(req);
       // Only show this user's own published links. Non-admins get paths
       // translated back to their home-relative view; admins see all as-is.
-      const items = publicStore.getAll()
+      const items = publicStore
+        .getAll()
         .map(function (entry) {
           const homePath = s.fromRootUserPath(entry.path);
           if (homePath === null) return null;
-          return { path: homePath, type: entry.type, createdAt: entry.createdAt };
+          return {
+            path: homePath,
+            type: entry.type,
+            createdAt: entry.createdAt,
+          };
         })
         .filter(Boolean);
       res.json(items);
