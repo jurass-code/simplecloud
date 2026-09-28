@@ -86,6 +86,9 @@
     viewMode: null,
     listToken: 0,
     overlays: [],
+    // history.back() we triggered ourselves (closing an overlay) — the popstate
+    // it produces must not be treated as the user navigating.
+    expectedPops: 0,
   };
 
   // ======================================================================
@@ -294,7 +297,11 @@
     setBackgroundHidden(true);
     if (wasEmpty) {
       try {
-        history.pushState({ simplecloudOverlay: true }, "");
+        history.pushState(
+          { simplecloudOverlay: true, scPath: state.currentPath },
+          "",
+          currentQuery(),
+        );
       } catch (e) {
         /* history is unavailable in some embedded webviews */
       }
@@ -343,6 +350,17 @@
     }
   }
 
+  // Drop the history entry an overlay pushed (so the back gesture keeps
+  // working) while marking the resulting popstate as ours.
+  function popHistoryEntry() {
+    try {
+      state.expectedPops++;
+      history.back();
+    } catch (e) {
+      state.expectedPops = Math.max(0, state.expectedPops - 1);
+    }
+  }
+
   function closeOverlay(el) {
     var idx = overlayIndex(el);
     if (idx < 0) return false;
@@ -350,11 +368,7 @@
     if (!state.overlays.length) {
       lockScroll(false);
       setBackgroundHidden(false);
-      try {
-        history.back();
-      } catch (e) {
-        /* ignore */
-      }
+      popHistoryEntry();
     }
     return true;
   }
@@ -365,7 +379,10 @@
     return true;
   }
 
-  window.addEventListener("popstate", function () {
+  window.addEventListener("popstate", function (e) {
+    var internal = state.expectedPops > 0;
+    if (internal) state.expectedPops--;
+
     if (state.overlays.length) {
       var entry = state.overlays.pop();
       hideOverlay(entry);
@@ -373,6 +390,33 @@
         lockScroll(false);
         setBackgroundHidden(false);
       }
+      return;
+    }
+
+    if (internal) {
+      // Closing an overlay drops its entry. If the entry we land on is not a
+      // folder entry (it is the overlay's own entry, or an unknown one), adopt
+      // it for the folder on screen so the address bar never lies. A real
+      // folder entry is left untouched — Back must still reach it.
+      var landed = e.state || {};
+      if (!landed.scFolder) syncUrl();
+      return;
+    }
+
+    // Back from the admin panel means "back to my files".
+    if (!$("#admin-screen").classList.contains("hidden")) {
+      showApp({ resetPath: false });
+      return;
+    }
+
+    // The user pressed Back/Forward: follow the folder recorded in the entry.
+    var target = e.state && e.state.scPath;
+    if (!target) {
+      var params = new URLSearchParams(location.search);
+      target = params.get("path");
+    }
+    if (target && target !== state.currentPath) {
+      applyHistoryPath(target);
     }
   });
 
@@ -553,7 +597,7 @@
   // ======================================================================
   // Navigation
   // ======================================================================
-  function nav(path) {
+  function goToPath(path, opts) {
     if (path === state.currentPath) return;
     state.currentPath = path;
     state.page = 1;
@@ -561,6 +605,16 @@
     buildBreadcrumbs();
     loadFiles();
     window.scrollTo({ top: 0, behavior: "auto" });
+    if (!opts || opts.push !== false) pushFolderEntry();
+  }
+
+  function nav(path) {
+    goToPath(path, { push: true });
+  }
+
+  // Coming back through history: the entry already exists, only re-render.
+  function applyHistoryPath(path) {
+    goToPath(path, { push: false });
   }
 
   function parentPath(p) {
@@ -727,11 +781,11 @@
   // ======================================================================
   // Listing
   // ======================================================================
-  // Keep the address bar in sync (no new history entries, so the back gesture
-  // keeps closing overlays). Makes folders/pages/sort deep-linkable and keeps
-  // the location across a refresh on mobile.
-  function syncUrl() {
-    if (!state.user) return;
+  // Keep the address bar in sync with path/page/sort/view. Folder changes push
+  // an entry (pushFolderEntry) so the Back button walks the tree; everything
+  // else rewrites the current entry. Makes any view deep-linkable and keeps the
+  // location across a refresh on mobile.
+  function currentQuery() {
     var params = new URLSearchParams();
     if (state.currentPath && state.currentPath !== "/") params.set("path", state.currentPath);
     if (state.page > 1) params.set("page", String(state.page));
@@ -739,8 +793,30 @@
     if (state.direction !== "asc") params.set("direction", state.direction);
     if (state.viewMode) params.set("view", state.viewMode);
     var qs = params.toString();
+    return qs ? "?" + qs : location.pathname;
+  }
+
+  function folderState() {
+    return { scPath: state.currentPath, scFolder: true };
+  }
+
+  function syncUrl() {
+    if (!state.user) return;
     try {
-      history.replaceState(history.state, "", qs ? "?" + qs : location.pathname);
+      history.replaceState(folderState(), "", currentQuery());
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
+  // Push one entry per folder so the browser Back button (the reflex on
+  // desktop) walks the folder tree instead of leaving the app. An entry is
+  // tagged as a folder entry; overlay entries are tagged separately so a pop
+  // can tell which one it landed on.
+  function pushFolderEntry() {
+    if (!state.user) return;
+    try {
+      history.pushState(folderState(), "", currentQuery());
     } catch (e) {
       /* ignore */
     }

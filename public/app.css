@@ -464,7 +464,19 @@ textarea,
 /* ==================== HEADER ==================== */
 
 .app-header {
-    margin-bottom: var(--space-12);
+    position: sticky;
+    top: 0;
+    z-index: var(--z-header);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-6);
+    margin: calc(var(--space-24) * -1) calc(var(--space-20) * -1) var(--space-12);
+    margin-left: calc((var(--space-20) + var(--safe-left)) * -1);
+    margin-right: calc((var(--space-20) + var(--safe-right)) * -1);
+    padding: var(--space-10) calc(var(--space-20) + var(--safe-right)) var(--space-8)
+        calc(var(--space-20) + var(--safe-left));
+    background: var(--surface-parchment);
+    border-bottom: 1px solid var(--color-border-sand);
 }
 
 .app-header-top {
@@ -520,9 +532,10 @@ textarea,
 
 /* Path row: parent button + breadcrumbs + sort */
 .path-row {
-    display: none;
+    display: flex;
     align-items: center;
     gap: var(--space-4);
+    min-width: 0;
 }
 
 .breadcrumbs {
@@ -531,9 +544,17 @@ textarea,
     gap: var(--space-4);
     font-size: 13px;
     min-width: 0;
-    flex-wrap: wrap;
+    flex: 1;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    white-space: nowrap;
     letter-spacing: 0.01em;
     color: var(--color-ink-secondary);
+    scrollbar-width: none;
+}
+
+.breadcrumbs::-webkit-scrollbar {
+    display: none;
 }
 
 .breadcrumbs a {
