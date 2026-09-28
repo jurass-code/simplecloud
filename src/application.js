@@ -14,6 +14,7 @@ const { ThumbnailService } = require("./files/thumbnailService");
 const { resolveStoragePath } = require("./files/pathSafety");
 const { createAdminRoutes } = require("./admin/adminRoutes");
 const { requireAdmin } = require("./admin/adminMiddleware");
+const { MAX_FILES_PER_UPLOAD } = require("./shared/limits");
 
 function createPublicRouter(publicStore, storageDir) {
   const router = express.Router();
@@ -183,6 +184,11 @@ function createApp(config) {
 
   app.use(express.json());
   app.use(cookieParser());
+  app.use(function (_req, res, next) {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Referrer-Policy", "same-origin");
+    next();
+  });
   app.use(express.static(path.join(__dirname, "..", "public")));
 
   const requireAuth = createAuthMiddleware(sessionStore);
@@ -240,6 +246,16 @@ function createApp(config) {
       throw new ApiError(ErrorCodes.UNAUTHORIZED.code, "User not found", 401);
     res.json({
       user: { id: user.id, username: user.username, role: user.role },
+    });
+  });
+
+  // Server-side limits the client must respect to avoid failing a whole
+  // multi-file upload (size is enforced per file, count per request).
+  app.get("/api/config", requireAuth, function (_req, res) {
+    res.json({
+      maxUploadBytes: config.maxUploadBytes,
+      maxUploadMb: config.maxUploadMb,
+      maxFilesPerUpload: MAX_FILES_PER_UPLOAD,
     });
   });
 

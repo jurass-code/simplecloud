@@ -9,7 +9,7 @@ npm install
 npm start
 ```
 
-Открыть http://localhost:3000
+Открыть http://localhost:3001
 
 **Учётные данные по умолчанию:** `admin` / `password`
 
@@ -38,7 +38,7 @@ npm run create-admin -- myuser mypassword admin
 
 | Переменная | По умолчанию | Назначение |
 |------------|-------------|------------|
-| `PORT` | `3000` | HTTP-порт |
+| `PORT` | `3001` | HTTP-порт |
 | `STORAGE_DIR` | `./data` | Корень файлового хранилища |
 | `CONFIG_DIR` | `./config` | Директория JSON-конфигов |
 | `SESSION_TTL_HOURS` | `24` | Время жизни сессии в часах |
@@ -63,14 +63,16 @@ npm run create-admin -- myuser mypassword admin
 | Метод | Endpoint | Описание |
 |--------|----------|----------|
 | `GET` | `/api/health` | Статус сервера `{"status":"ok"}` |
+| `GET` | `/api/config` | Лимиты загрузки для клиента: `{"maxUploadBytes":104857600,"maxUploadMb":100,"maxFilesPerUpload":50}` |
 
 ### Files
 
 | Метод | Endpoint | Параметры | Описание |
 |--------|----------|-----------|----------|
 | `GET` | `/api/files` | `?path=&page=&pageSize=&sort=&direction=` | Список файлов с пагинацией |
-| `GET` | `/api/files/download` | `?path=` | Скачать файл |
-| `POST` | `/api/files/upload` | `?path=&overwrite=true` + `multipart: file` | Загрузить файл |
+| `GET` | `/api/files/download` | `?path=` | Скачать файл (`Content-Disposition: attachment`) |
+| `GET` | `/api/files/raw` | `?path=` | Отдать файл **inline** для превью (см. ниже) |
+| `POST` | `/api/files/upload` | `?path=&overwrite=true` + `multipart: files` (поле `files`, до 50 файлов) | Загрузить файл(ы) |
 | `POST` | `/api/files/folder` | `{"path":"/","name":"folder"}` | Создать папку |
 | `PATCH` | `/api/files/rename` | `{"path":"/old","newName":"new"}` | Переименовать |
 | `DELETE` | `/api/files` | `?path=` | Удалить файл или папку |
@@ -139,59 +141,74 @@ npm run create-admin -- myuser mypassword admin
 | 403 | `FORBIDDEN_PATH` | Попытка выйти за пределы storage |
 | 404 | `FILE_NOT_FOUND` | Файл или папка не найдены |
 | 409 | `ALREADY_EXISTS` | Конфликт имени |
-| 413 | `UPLOAD_TOO_LARGE` | Файл слишком большой |
+| 413 | `UPLOAD_TOO_LARGE` | Файл слишком большой (`MAX_UPLOAD_MB`) |
+| 415 | `THUMBNAIL_UNAVAILABLE` | Картинку не удалось декодировать (битый файл, неподдерживаемый кодек) — клиент показывает иконку типа |
 | 500 | `INTERNAL_ERROR` | Внутренняя ошибка |
+
+Ошибки лимитов multipart (multer) отдаются с понятным текстом, а не как 500:
+
+| HTTP | Код | Когда |
+|------|-----|-------|
+| 400 | `INVALID_REQUEST` | `Too many files in one upload (max 50)` — больше 50 файлов в одном запросе |
+| 413 | `UPLOAD_TOO_LARGE` | `File is too large` — файл больше `MAX_UPLOAD_MB` |
+| 400 | `INVALID_REQUEST` | Неизвестное поле формы, слишком длинные/частые поля |
+
+Важно: лимит размера в multer срабатывает на уровне запроса, поэтому один большой файл в multipart-запросе прерывает **весь** запрос. Фронтенд это учитывает: проверяет размер до отправки и грузит выбранные файлы последовательными пачками по 4 файла. При использовании API напрямую грузите большие файлы по одному или проверяйте размер заранее (см. `/api/config`).
 
 ## Примеры curl
 
 ```sh
 # Health check
-curl http://localhost:3000/api/health
+curl http://localhost:3001/api/health
 
 # Логин (сохраняет cookie в файл)
-curl -c cookies.txt -X POST http://localhost:3000/api/auth/login \
+curl -c cookies.txt -X POST http://localhost:3001/api/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"username":"admin","password":"password"}'
 
 # Список файлов
-curl -b cookies.txt 'http://localhost:3000/api/files?path=/&page=1&pageSize=50'
+curl -b cookies.txt 'http://localhost:3001/api/files?path=/&page=1&pageSize=50'
 
 # Создать папку
-curl -b cookies.txt -X POST http://localhost:3000/api/files/folder \
+curl -b cookies.txt -X POST http://localhost:3001/api/files/folder \
   -H 'Content-Type: application/json' \
   -d '{"path":"/","name":"docs"}'
 
-# Загрузить файл
-curl -b cookies.txt -X POST 'http://localhost:3000/api/files/upload?path=/docs' \
-  -F 'file=@report.pdf'
+# Загрузить один файл (поле формы называется files)
+curl -b cookies.txt -X POST 'http://localhost:3001/api/files/upload?path=/docs' \
+  -F 'files=@report.pdf'
+
+# Загрузить несколько файлов одним запросом (до 50)
+curl -b cookies.txt -X POST 'http://localhost:3001/api/files/upload?path=/docs' \
+  -F 'files=@photo-1.jpg' -F 'files=@photo-2.jpg' -F 'files=@clip.mp4'
 
 # Скачать файл
-curl -b cookies.txt 'http://localhost:3000/api/files/download?path=/docs/report.pdf' \
+curl -b cookies.txt 'http://localhost:3001/api/files/download?path=/docs/report.pdf' \
   -o report.pdf
 
 # Опубликовать файл (получить публичную ссылку)
-curl -b cookies.txt -X POST http://localhost:3000/api/files/publish \
+curl -b cookies.txt -X POST http://localhost:3001/api/files/publish \
   -H 'Content-Type: application/json' \
   -d '{"path":"/docs/report.pdf"}'
 
 # Скачать по публичной ссылке (без авторизации)
-curl http://localhost:3000/pub/docs/report.pdf
+curl http://localhost:3001/pub/docs/report.pdf
 
 # Отозвать публичный доступ
-curl -b cookies.txt -X DELETE http://localhost:3000/api/files/publish \
+curl -b cookies.txt -X DELETE http://localhost:3001/api/files/publish \
   -H 'Content-Type: application/json' \
   -d '{"path":"/docs/report.pdf"}'
 
 # Переименовать
-curl -b cookies.txt -X PATCH http://localhost:3000/api/files/rename \
+curl -b cookies.txt -X PATCH http://localhost:3001/api/files/rename \
   -H 'Content-Type: application/json' \
   -d '{"path":"/docs/report.pdf","newName":"final.pdf"}'
 
 # Удалить
-curl -b cookies.txt -X DELETE 'http://localhost:3000/api/files?path=/docs/final.pdf'
+curl -b cookies.txt -X DELETE 'http://localhost:3001/api/files?path=/docs/final.pdf'
 
 # Выйти
-curl -b cookies.txt -X POST http://localhost:3000/api/auth/logout
+curl -b cookies.txt -X POST http://localhost:3001/api/auth/logout
 ```
 
 ## Структура проекта
@@ -222,12 +239,13 @@ simplecloud2/
 │   │   ├── fileRoutes.js   # HTTP-роуты + multer + publish
 │   │   └── publicStore.js  # Хранилище публичных ссылок
 │   └── shared/             # Утилиты
-│       ├── errors.js       # ApiError + error handler
+│       ├── errors.js       # ApiError + error handler + коды multer
+│       ├── limits.js       # MAX_FILES_PER_UPLOAD (общий для сервера и ошибок)
 │       └── asyncRoute.js   # Обёртка для async-обработчиков
 ├── scripts/
 │   └── create-admin.js     # CLI создание пользователя
 └── test/
-    └── integration.js      # Интеграционные тесты (65 шт.)
+    └── integration.js      # Интеграционные тесты (78 шт.)
 ```
 
 ## Изоляция пользователей
@@ -245,12 +263,29 @@ simplecloud2/
 - Cookie: `HttpOnly`, `SameSite=Lax`, `Secure` в production
 - Все пути валидируются — path traversal заблокирован
 - Пользователи без прав админа изолированы в `data/homes/<username>` — не видят чужие файлы
-- Upload ограничен по размеру (`MAX_UPLOAD_MB`)
+- Upload ограничен по размеру (`MAX_UPLOAD_MB`) и по количеству файлов в запросе (50)
+- Превью-роут `/api/files/raw` не отдаёт inline потенциально активные типы (svg, html) и всегда ставит `nosniff` + CSP `sandbox`
+- Имя файла из multipart перекодируется из latin1 в UTF-8, поэтому кириллица и эмодзи в именах не превращаются в мусор
 - Нельзя удалить или переименовать корень хранилища
 - Ошибки не раскрывают абсолютные пути сервера
 - JSON-конфиги записываются атомарно (tmp -> rename)
 - Сессии очищаются от просроченных при старте
 - Публичные ссылки: случайный токен (24 hex), недоступны без явной публикации
+
+## Frontend
+
+Ванильные HTML/CSS/JS без сборки: `public/index.html`, `public/app.css`, `public/app.js`. Дизайн-система описана в `DESIGN.md`.
+
+Мобильная адаптация (mobile-first, применяется на ширине ≤ 640px, тач-размеры также включаются по `pointer: coarse`):
+
+- компактный sticky-хедер: строка навигации (вверх + хлебные крошки + сортировка) и тулбар с иконками;
+- таблица файлов превращается в список с крупными строками (имя + размер/дата), все действия — в bottom sheet по кнопке «⋮» (44×44);
+- загрузка: выбор «Файлы / Фото и видео / Камера» (нативные `<input type=file>` + `capture=environment`), прогресс по каждому файлу, пачки по 4 файла, отмена/повтор/сворачивание панели, предупреждение при попытке уйти во время загрузки;
+- превью открывается в полноэкранном просмотрщике (свайпы, `Escape`, кнопка «Назад» на Android закрывает просмотрщик, а не страницу) — через `/api/files/raw` с поддержкой `Range` для видео;
+- выделение файлов и пакетное удаление, панель пакетных действий закреплена снизу и не перекрывает контент;
+- все модальные окна — bottom sheet на телефоне и центрированные попапы на десктопе; фокус удерживается внутри окна, фон помечается `aria-hidden`;
+- учтены `env(safe-area-inset-*)`, `viewport-fit=cover`, шрифт полей 16px (iOS не зумит при фокусе), `@media (hover: hover)` для hover-эффектов;
+- контраст текста соответствует WCAG AA (все проверенные элементы ≥ 4.5:1), есть видимый `:focus-visible`.
 
 ## Ограничения
 

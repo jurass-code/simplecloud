@@ -215,7 +215,10 @@ class FileService {
 
   // ---------- download ----------
 
-  async download(userPath) {
+  // Resolve a single file to { filename, filePath, size }. Shared by the
+  // attachment download and the inline/range endpoint so path containment and
+  // the "is it a file" check happen in exactly one place.
+  async resolveFile(userPath) {
     const filePath = resolveStoragePath(userPath, this.storageDir);
 
     let stat;
@@ -242,8 +245,17 @@ class FileService {
 
     return {
       filename: path.basename(filePath),
-      stream: fs.createReadStream(filePath),
+      filePath,
       size: stat.size,
+    };
+  }
+
+  async download(userPath) {
+    const file = await this.resolveFile(userPath);
+    return {
+      filename: file.filename,
+      stream: fs.createReadStream(file.filePath),
+      size: file.size,
     };
   }
 

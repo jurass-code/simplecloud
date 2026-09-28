@@ -38,7 +38,12 @@ function request(method, urlPath, opts) {
           } catch (e) {
             body = raw;
           }
-          resolve({ status: res.statusCode, body: body, raw: raw });
+          resolve({
+            status: res.statusCode,
+            body: body,
+            raw: raw,
+            headers: res.headers,
+          });
         });
       },
     );
@@ -558,6 +563,142 @@ async function run() {
       }),
     JSON.stringify(res.body),
   );
+
+  // 34. Client-facing upload limits
+  console.log("\n34. Upload limits endpoint");
+  res = await request("GET", "/api/config");
+  check(
+    "maxUploadBytes exposed",
+    res.body && res.body.maxUploadBytes > 0,
+    JSON.stringify(res.body),
+  );
+  check(
+    "maxFilesPerUpload exposed",
+    res.body && res.body.maxFilesPerUpload === 50,
+    JSON.stringify(res.body),
+  );
+
+  // 35. Inline media endpoint (preview) with byte ranges for video scrubbing
+  console.log("\n35. Inline media endpoint");
+  var pngBytes = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==",
+    "base64",
+  );
+  await request("DELETE", "/api/files?path=/media"); // keep the suite re-runnable
+  await request("POST", "/api/files/folder", { body: { path: "/", name: "media" } });
+  var mediaBoundary = "----T35";
+  var mediaBody = Buffer.concat([
+    Buffer.from(
+      "--" + mediaBoundary +
+        '\r\nContent-Disposition: form-data; name="files"; filename="pic.png"\r\nContent-Type: image/png\r\n\r\n',
+    ),
+    pngBytes,
+    Buffer.from(
+      "\r\n--" + mediaBoundary +
+        '\r\nContent-Disposition: form-data; name="files"; filename="page.html"\r\nContent-Type: text/html\r\n\r\n' +
+        "<script>alert(1)</script>\r\n--" + mediaBoundary + "--\r\n",
+    ),
+  ]);
+  res = await request("POST", "/api/files/upload?path=/media", {
+    body: mediaBody,
+    headers: { "Content-Type": "multipart/form-data; boundary=" + mediaBoundary },
+  });
+  check("uploaded", res.status === 201, JSON.stringify(res.body));
+
+  res = await request("GET", "/api/files/raw?path=/media/pic.png");
+  check(
+    "png served inline",
+    res.status === 200 && res.headers["content-type"] === "image/png",
+    res.status + " " + res.headers["content-type"],
+  );
+  check("accept-ranges", res.headers["accept-ranges"] === "bytes");
+  check("nosniff", res.headers["x-content-type-options"] === "nosniff");
+
+  res = await request("GET", "/api/files/raw?path=/media/pic.png", {
+    headers: { Range: "bytes=0-9" },
+  });
+  check(
+    "206 partial content",
+    res.status === 206 && /^bytes 0-9\//.test(res.headers["content-range"] || ""),
+    res.status + " " + res.headers["content-range"],
+  );
+  check(
+    "partial length",
+    res.headers["content-length"] === "10",
+    res.headers["content-length"],
+  );
+
+  res = await request("GET", "/api/files/raw?path=/media/pic.png", {
+    headers: { Range: "bytes=99999-" },
+  });
+  check("416 unsatisfiable", res.status === 416, "got " + res.status);
+
+  res = await request("GET", "/api/files/raw?path=/media/page.html");
+  check(
+    "html never served inline",
+    res.headers["content-type"] === "application/octet-stream" &&
+      /attachment/.test(res.headers["content-disposition"] || ""),
+    res.headers["content-type"] + " " + res.headers["content-disposition"],
+  );
+
+  // 36. UTF-8 file names survive the multipart round trip (busboy decodes the
+  //     filename as latin1; the server re-encodes it back to UTF-8)
+  console.log("\n36. UTF-8 file names");
+  var utf8Name = "\u0421\u043d\u0438\u043c\u043e\u043a \u044d\u043a\u0440\u0430\u043d\u0430 2026-01-02.png";
+  var utf8Boundary = "----T36";
+  var utf8Body = Buffer.concat([
+    Buffer.from(
+      "--" + utf8Boundary +
+        '\r\nContent-Disposition: form-data; name="files"; filename="' + utf8Name +
+        '"\r\nContent-Type: image/png\r\n\r\n',
+      "utf8",
+    ),
+    pngBytes,
+    Buffer.from("\r\n--" + utf8Boundary + "--\r\n"),
+  ]);
+  res = await request("POST", "/api/files/upload?path=/media", {
+    body: utf8Body,
+    headers: { "Content-Type": "multipart/form-data; boundary=" + utf8Boundary },
+  });
+  check(
+    "name round trip",
+    res.status === 201 && res.body.files[0] && res.body.files[0].name === utf8Name,
+    JSON.stringify(res.body),
+  );
+  res = await request("GET", "/api/files?path=/media");
+  check(
+    "listed with clean name",
+    res.body.items.some(function (i) { return i.name === utf8Name; }),
+    JSON.stringify(res.body.items.map(function (i) { return i.name; })),
+  );
+
+  // 37. More files than the per-request limit is an actionable 400, not a 500
+  console.log("\n37. Upload file-count limit");
+  var manyBoundary = "----T37";
+  var manyParts = [];
+  for (var fi = 0; fi < 51; fi++) {
+    manyParts.push(
+      Buffer.from(
+        "--" + manyBoundary +
+          '\r\nContent-Disposition: form-data; name="files"; filename="f' + fi +
+          '.txt"\r\nContent-Type: text/plain\r\n\r\nx\r\n',
+      ),
+    );
+  }
+  manyParts.push(Buffer.from("--" + manyBoundary + "--\r\n"));
+  res = await request("POST", "/api/files/upload?path=/media", {
+    body: Buffer.concat(manyParts),
+    headers: { "Content-Type": "multipart/form-data; boundary=" + manyBoundary },
+  });
+  check(
+    "400 with limit message",
+    res.status === 400 &&
+      res.body.error &&
+      /max 50/.test(res.body.error.message),
+    res.status + " " + JSON.stringify(res.body),
+  );
+
+  await request("DELETE", "/api/files?path=/media");
 
   // cleanup sandbox users + their homes
   cookie = adminCookie;

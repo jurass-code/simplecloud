@@ -1,19 +1,73 @@
 const { Router } = require("express");
 const multer = require("multer");
+const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { ApiError, ErrorCodes } = require("../shared/errors");
 const { asyncRoute } = require("../shared/asyncRoute");
 const { isValidName } = require("./pathSafety");
+const { mimeFor, isInlineSafe } = require("./mimeTypes");
+const { MAX_FILES_PER_UPLOAD } = require("../shared/limits");
+
+// multer/busboy decode multipart filenames as latin1, so a UTF-8 name such as
+// "Снимок экрана 2026-01-01.png" (macOS/iOS with a non-English locale, very
+// common on phones) arrives as mojibake. Re-encode the raw bytes as UTF-8 when
+// they form valid UTF-8; otherwise keep the original name.
+function decodeOriginalName(name) {
+  if (!name || typeof name !== "string") return name;
+  const bytes = Buffer.from(name, "latin1");
+  const decoded = bytes.toString("utf8");
+  if (decoded.includes("\uFFFD")) return name;
+  return Buffer.compare(Buffer.from(decoded, "utf8"), bytes) === 0
+    ? decoded
+    : name;
+}
+
+// Parse a single-range "bytes=" header. Returns { start, end } or
+// { unsatisfiable: true } when the range cannot be served.
+function parseRange(header, size) {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(String(header || "").trim());
+  if (!match) return null;
+  const [, rawStart, rawEnd] = match;
+  if (rawStart === "" && rawEnd === "") return null;
+
+  let start;
+  let end;
+  if (rawStart === "") {
+    const suffixLength = parseInt(rawEnd, 10);
+    if (!Number.isFinite(suffixLength) || suffixLength <= 0) return null;
+    start = Math.max(0, size - suffixLength);
+    end = size - 1;
+  } else {
+    start = parseInt(rawStart, 10);
+    end = rawEnd === "" ? size - 1 : parseInt(rawEnd, 10);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+    if (end > size - 1) end = size - 1;
+  }
+
+  if (start >= size || start > end) return { unsatisfiable: true };
+  return { start, end };
+}
+
+function contentDisposition(kind, filename) {
+  const ascii = String(filename).replace(/[^\x20-\x7E]/g, "_").replace(/"/g, "");
+  return (
+    kind +
+    '; filename="' +
+    ascii +
+    '"; filename*=UTF-8\'\'' +
+    encodeURIComponent(filename)
+  );
+}
 
 function createFileRoutes(rootFileService, publicStore, thumbnailService) {
   const router = Router();
 
   const upload = multer({
     dest: path.join(os.tmpdir(), "simplecloud-uploads"),
-    limits: { fileSize: rootFileService.maxUploadBytes, files: 50 },
+    limits: { fileSize: rootFileService.maxUploadBytes, files: MAX_FILES_PER_UPLOAD },
     fileFilter(_req, file, cb) {
-      if (!isValidName(file.originalname)) {
+      if (!isValidName(decodeOriginalName(file.originalname))) {
         cb(
           new ApiError(
             ErrorCodes.INVALID_REQUEST.code,
@@ -52,12 +106,78 @@ function createFileRoutes(rootFileService, publicStore, thumbnailService) {
       const { filename, stream, size } = await svc(req).download(
         req.query.path,
       );
-      res.setHeader(
-        "Content-Disposition",
-        'attachment; filename="' + encodeURIComponent(filename) + '"',
-      );
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader("Content-Disposition", contentDisposition("attachment", filename));
       res.setHeader("Content-Type", "application/octet-stream");
       res.setHeader("Content-Length", size);
+      stream.on("error", function () {
+        if (!res.headersSent) res.status(500).end();
+      });
+      stream.pipe(res);
+    }),
+  );
+
+  // Inline media endpoint used by the in-app preview (images, video, audio).
+  // Serves only whitelisted media types with correct MIME so <img>/<video> can
+  // render, advertises byte ranges (Safari will not play video without 206
+  // support), and falls back to a download for anything else — an uploaded
+  // .html or .svg must never be rendered on the app's own origin.
+  router.get(
+    "/raw",
+    asyncRoute(async (req, res) => {
+      const file = await svc(req).resolveFile(req.query.path);
+      const mime = mimeFor(file.filename);
+
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader("Cache-Control", "private, max-age=0, must-revalidate");
+
+      if (!isInlineSafe(mime)) {
+        res.setHeader(
+          "Content-Disposition",
+          contentDisposition("attachment", file.filename),
+        );
+        res.setHeader("Content-Type", "application/octet-stream");
+        res.setHeader("Content-Length", file.size);
+        const stream = fs.createReadStream(file.filePath);
+        stream.on("error", function () {
+          if (!res.headersSent) res.status(500).end();
+        });
+        return stream.pipe(res);
+      }
+
+      res.setHeader("Content-Type", mime);
+      res.setHeader(
+        "Content-Disposition",
+        contentDisposition("inline", file.filename),
+      );
+      res.setHeader("Accept-Ranges", "bytes");
+      // Defence in depth: even a whitelisted type cannot run script if it is
+      // ever navigated to directly.
+      res.setHeader("Content-Security-Policy", "default-src 'none'; sandbox");
+
+      const range = req.headers.range ? parseRange(req.headers.range, file.size) : null;
+      if (range && range.unsatisfiable) {
+        res.status(416);
+        res.setHeader("Content-Range", "bytes */" + file.size);
+        return res.end();
+      }
+
+      if (range) {
+        res.status(206);
+        res.setHeader("Content-Range", `bytes ${range.start}-${range.end}/${file.size}`);
+        res.setHeader("Content-Length", range.end - range.start + 1);
+        const stream = fs.createReadStream(file.filePath, {
+          start: range.start,
+          end: range.end,
+        });
+        stream.on("error", function () {
+          if (!res.headersSent) res.status(500).end();
+        });
+        return stream.pipe(res);
+      }
+
+      res.setHeader("Content-Length", file.size);
+      const stream = fs.createReadStream(file.filePath);
       stream.on("error", function () {
         if (!res.headersSent) res.status(500).end();
       });
@@ -84,7 +204,7 @@ function createFileRoutes(rootFileService, publicStore, thumbnailService) {
 
   router.post(
     "/upload",
-    upload.array("files", 50),
+    upload.array("files", MAX_FILES_PER_UPLOAD),
     asyncRoute(async (req, res) => {
       if (!req.files || req.files.length === 0) {
         throw new ApiError(
@@ -98,11 +218,12 @@ function createFileRoutes(rootFileService, publicStore, thumbnailService) {
       const s = svc(req);
       const results = [];
       for (const f of req.files) {
+        const originalName = decodeOriginalName(f.originalname);
         try {
           const r = await s.uploadFromTemp(
             userPath,
             f.path,
-            f.originalname,
+            originalName,
             overwrite,
           );
           results.push({
@@ -112,8 +233,10 @@ function createFileRoutes(rootFileService, publicStore, thumbnailService) {
             status: "ok",
           });
         } catch (err) {
+          // Do not leak the temp file when the copy never happened.
+          await fs.promises.unlink(f.path).catch(() => {});
           results.push({
-            name: f.originalname,
+            name: originalName,
             status: "error",
             message: err.message,
           });

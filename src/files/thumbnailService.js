@@ -75,10 +75,26 @@ class ThumbnailService {
     }
 
     // Generate new thumbnail.
-    await sharp(absPath)
-      .resize(THUMBNAIL_SIZE, THUMBNAIL_SIZE, { fit: "inside", withoutEnlargement: true })
-      .jpeg({ quality: THUMBNAIL_QUALITY })
-      .toFile(thumbPath);
+    try {
+      await sharp(absPath)
+        .resize(THUMBNAIL_SIZE, THUMBNAIL_SIZE, { fit: "inside", withoutEnlargement: true })
+        .jpeg({ quality: THUMBNAIL_QUALITY })
+        .toFile(thumbPath);
+    } catch (err) {
+      // Undecodable image (corrupt upload, unsupported codec): drop any partial
+      // cache file, log one line and let the client fall back to a type icon.
+      await fs.promises.rm(thumbPath, { force: true }).catch(() => {});
+      console.warn(
+        'Thumbnail unavailable for %s: %s',
+        path.basename(absPath),
+        err.message,
+      );
+      throw new ApiError(
+        ErrorCodes.THUMBNAIL_UNAVAILABLE.code,
+        'No preview available for this file',
+        ErrorCodes.THUMBNAIL_UNAVAILABLE.status,
+      );
+    }
 
     const thumbStat = await fs.promises.stat(thumbPath);
     const stream = fs.createReadStream(thumbPath);

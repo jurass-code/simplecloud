@@ -2,7 +2,13 @@
 <html lang="en">
     <head>
         <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta
+            name="viewport"
+            content="width=device-width, initial-scale=1, viewport-fit=cover"
+        />
+        <meta name="theme-color" content="#f7f7f4" />
+        <meta name="color-scheme" content="light" />
+        <meta name="format-detection" content="telephone=no" />
         <title>simplecloud</title>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -13,304 +19,789 @@
         <link rel="stylesheet" href="/app.css" />
     </head>
     <body>
-        <!-- Login -->
-        <div id="login-screen" class="screen">
-            <div class="login-card">
+        <!-- ==================== LOGIN ==================== -->
+        <div id="login-screen" class="screen screen--login">
+            <main class="login-card">
                 <h1>simplecloud</h1>
                 <form id="login-form">
-                    <label
-                        ><span>Username</span
-                        ><input
+                    <div class="field">
+                        <label for="login-username">Username</label>
+                        <input
+                            id="login-username"
                             type="text"
                             name="username"
                             autocomplete="username"
+                            autocapitalize="none"
+                            autocorrect="off"
+                            spellcheck="false"
+                            enterkeyhint="next"
                             required
-                            autofocus
-                    /></label>
-                    <label
-                        ><span>Password</span
-                        ><input
+                        />
+                    </div>
+                    <div class="field">
+                        <label for="login-password">Password</label>
+                        <input
+                            id="login-password"
                             type="password"
                             name="password"
                             autocomplete="current-password"
+                            enterkeyhint="go"
                             required
-                    /></label>
-                    <div id="login-error" class="error-banner hidden"></div>
+                        />
+                    </div>
+                    <div
+                        id="login-error"
+                        class="error-banner hidden"
+                        role="alert"
+                    ></div>
                     <button
                         type="submit"
                         id="login-btn"
-                        class="btn btn-primary btn-full"
+                        class="btn btn-primary btn-full btn-tall"
                     >
                         Sign in
                     </button>
                 </form>
-            </div>
+            </main>
         </div>
 
-        <!-- Files -->
+        <!-- ==================== FILES ==================== -->
         <div id="app-screen" class="screen hidden">
+            <a class="skip-link" href="#drop-zone">Skip to file list</a>
+
             <header class="app-header">
-                <h1 class="app-title">simplecloud</h1>
-                <div class="header-right">
-                    <span id="current-user"></span>
-                    <button id="admin-btn" class="btn btn-outline hidden">
-                        Settings
+                <div class="app-header-top">
+                    <h1 class="app-title">simplecloud</h1>
+                    <div class="header-right">
+                        <span id="current-user" class="user-chip"></span>
+                        <button
+                            id="admin-btn"
+                            class="btn btn-outline btn-sm header-desktop-only hidden"
+                        >
+                            Settings
+                        </button>
+                        <button
+                            id="logout-btn"
+                            class="btn btn-outline btn-sm header-desktop-only"
+                        >
+                            Log out
+                        </button>
+                        <button
+                            id="account-btn"
+                            class="avatar-btn"
+                            type="button"
+                            aria-label="Account and settings"
+                            aria-haspopup="dialog"
+                            aria-expanded="false"
+                        >
+                            <span id="user-initials" aria-hidden="true"></span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="path-row">
+                    <button
+                        id="up-btn"
+                        class="icon-btn"
+                        type="button"
+                        aria-label="Go to parent folder"
+                        title="Parent folder"
+                        disabled
+                    >
+                        <svg
+                            class="icon"
+                            viewBox="0 0 24 24"
+                            aria-hidden="true"
+                        >
+                            <path d="M15 5l-7 7 7 7" />
+                        </svg>
                     </button>
-                    <button id="logout-btn" class="btn btn-outline">
-                        Logout
-                    </button>
+                    <nav
+                        class="breadcrumbs"
+                        id="breadcrumbs"
+                        aria-label="Current folder"
+                    ></nav>
+                    <label class="sort-control">
+                        <span class="visually-hidden">Sort by</span>
+                        <select id="mobile-sort">
+                            <option value="name-asc">Name ↑</option>
+                            <option value="name-desc">Name ↓</option>
+                            <option value="type-asc">Type ↑</option>
+                            <option value="size-desc">Size ↓</option>
+                            <option value="modifiedAt-desc">Date ↓</option>
+                        </select>
+                    </label>
                 </div>
             </header>
 
+            <main id="main-content">
             <div class="toolbar">
-                <div class="breadcrumbs" id="breadcrumbs"></div>
                 <div class="toolbar-actions">
-                    <button id="upload-btn" class="btn btn-primary">
-                        Upload
+                    <button
+                        id="upload-btn"
+                        class="btn btn-primary toolbar-upload"
+                        type="button"
+                        aria-haspopup="dialog"
+                    >
+                        <svg
+                            class="icon"
+                            viewBox="0 0 24 24"
+                            aria-hidden="true"
+                        >
+                            <path d="M12 16V4M8 8l4-4 4 4" />
+                            <path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
+                        </svg>
+                        <span>Upload</span>
                     </button>
-                    <button id="create-folder-btn" class="btn">
-                        New Folder
+                    <button
+                        id="create-folder-btn"
+                        class="btn toolbar-folder"
+                        type="button"
+                    >
+                        <svg
+                            class="icon"
+                            viewBox="0 0 24 24"
+                            aria-hidden="true"
+                        >
+                            <path
+                                d="M3 7a2 2 0 012-2h3.6l1.7 2H19a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"
+                            />
+                            <path d="M12 11v4M10 13h4" />
+                        </svg>
+                        <span>New folder</span>
                     </button>
                     <button
                         id="view-toggle-btn"
-                        class="btn"
-                        title="Toggle view"
+                        class="btn icon-btn-bordered"
+                        type="button"
+                        aria-label="Switch to list view"
+                        title="Switch view"
                     >
-                        <span class="view-icon-table hidden">&#9776;</span>
-                        <span class="view-icon-grid">&#8862;</span>
+                        <svg
+                            class="icon view-icon view-icon-grid"
+                            viewBox="0 0 24 24"
+                            aria-hidden="true"
+                        >
+                            <rect x="3" y="3" width="7" height="7" rx="1" />
+                            <rect x="14" y="3" width="7" height="7" rx="1" />
+                            <rect x="3" y="14" width="7" height="7" rx="1" />
+                            <rect x="14" y="14" width="7" height="7" rx="1" />
+                        </svg>
+                        <svg
+                            class="icon view-icon view-icon-table hidden"
+                            viewBox="0 0 24 24"
+                            aria-hidden="true"
+                        >
+                            <path d="M4 6h16M4 12h16M4 18h16" />
+                        </svg>
                     </button>
-                    <button id="refresh-btn" class="btn" title="Refresh">
-                        &#x21bb;
+                    <button
+                        id="refresh-btn"
+                        class="btn icon-btn-bordered"
+                        type="button"
+                        aria-label="Refresh list"
+                        title="Refresh"
+                    >
+                        <svg
+                            class="icon"
+                            viewBox="0 0 24 24"
+                            aria-hidden="true"
+                        >
+                            <path d="M20 11a8 8 0 10-2.3 5.7" />
+                            <path d="M20 5v6h-6" />
+                        </svg>
                     </button>
                 </div>
-                <select id="mobile-sort" class="mobile-sort">
-                    <option value="name-asc">Name ↑</option>
-                    <option value="name-desc">Name ↓</option>
-                    <option value="type-asc">Type ↑</option>
-                    <option value="size-desc">Size ↓</option>
-                    <option value="modifiedAt-desc">Date ↓</option>
-                </select>
             </div>
 
             <div id="batch-bar" class="batch-bar hidden">
-                <span id="batch-count"></span>
-                <button id="batch-delete-btn" class="btn btn-danger btn-sm">
-                    Delete selected
-                </button>
-                <button id="batch-clear-btn" class="btn btn-sm">Clear</button>
+                <span id="batch-count" class="batch-count"></span>
+                <div class="batch-actions">
+                    <button
+                        id="batch-select-all-btn"
+                        class="btn btn-sm"
+                        type="button"
+                    >
+                        Select page
+                    </button>
+                    <button id="batch-clear-btn" class="btn btn-sm" type="button">
+                        Clear
+                    </button>
+                    <button
+                        id="batch-delete-btn"
+                        class="btn btn-sm btn-danger"
+                        type="button"
+                    >
+                        Delete
+                    </button>
+                </div>
             </div>
 
-            <div id="error-banner" class="error-banner hidden"></div>
+            <div
+                id="error-banner"
+                class="error-banner hidden"
+                role="alert"
+            ></div>
 
-            <div id="drop-zone" class="file-table-wrapper">
+            <div id="drop-zone" class="file-table-wrapper" tabindex="-1">
                 <div id="drop-overlay" class="drop-overlay hidden">
-                    <div class="drop-message">Drop files here to upload</div>
+                    <div class="drop-message">Drop files to upload</div>
                 </div>
                 <div class="table-scroll">
-                    <table class="file-table">
+                    <table class="file-table file-table--files">
+                        <caption class="visually-hidden">
+                            Files in the current folder
+                        </caption>
                         <thead id="file-table-head" class="hidden">
                             <tr>
                                 <th class="col-check">
                                     <input
                                         type="checkbox"
                                         id="select-all"
-                                        title="Select all"
+                                        aria-label="Select all files on this page"
                                     />
                                 </th>
-                                <th class="sortable" data-sort="name">
+                                <th
+                                    class="sortable"
+                                    data-sort="name"
+                                    scope="col"
+                                    aria-sort="none"
+                                >
                                     Name <span class="sort-arrow"></span>
                                 </th>
-                                <th class="sortable" data-sort="type">
+                                <th
+                                    class="sortable"
+                                    data-sort="type"
+                                    scope="col"
+                                    aria-sort="none"
+                                >
                                     Type <span class="sort-arrow"></span>
                                 </th>
-                                <th class="sortable" data-sort="size">
+                                <th
+                                    class="sortable"
+                                    data-sort="size"
+                                    scope="col"
+                                    aria-sort="none"
+                                >
                                     Size <span class="sort-arrow"></span>
                                 </th>
-                                <th class="sortable" data-sort="modifiedAt">
+                                <th
+                                    class="sortable"
+                                    data-sort="modifiedAt"
+                                    scope="col"
+                                    aria-sort="none"
+                                >
                                     Modified <span class="sort-arrow"></span>
                                 </th>
-                                <th>Actions</th>
+                                <th scope="col">Actions</th>
                             </tr>
                         </thead>
                         <tbody id="file-list"></tbody>
                     </table>
                 </div>
-                <div id="file-grid" class="file-grid"></div>
-                <div id="loading-state" class="loading hidden">Loading...</div>
+                <div id="file-grid" class="file-grid hidden"></div>
+                <div id="loading-state" class="loading hidden" role="status">
+                    <span class="spinner" aria-hidden="true"></span> Loading…
+                </div>
                 <div id="empty-state" class="empty-state hidden">
-                    This folder is empty.<br /><small
-                        >Drag &amp; drop files here to upload.</small
-                    >
+                    <p>This folder is empty.</p>
+                    <p class="empty-hint" id="empty-hint">
+                        Drag &amp; drop files here, or use Upload.
+                    </p>
                 </div>
             </div>
 
             <div class="pagination" id="pagination">
-                <button id="prev-page" class="btn" disabled>Previous</button>
-                <span id="page-info"></span>
-                <button id="next-page" class="btn" disabled>Next</button>
+                <button id="prev-page" class="btn btn-tall" type="button" disabled>
+                    Previous
+                </button>
+                <span id="page-info" class="page-info" aria-live="polite"></span>
+                <button id="next-page" class="btn btn-tall" type="button" disabled>
+                    Next
+                </button>
             </div>
+            </main>
+
+            <!-- File inputs live inside the app screen so they are out of the
+                 accessibility tree before sign-in. They stay rendered (clipped,
+                 never display:none) because iOS Safari only opens the picker
+                 from a label activation or a trusted gesture. -->
+            <input
+                type="file"
+                id="upload-input"
+                class="visually-hidden"
+                aria-label="Choose files to upload"
+                multiple
+                tabindex="-1"
+            />
+            <input
+                type="file"
+                id="upload-media-input"
+                class="visually-hidden"
+                aria-label="Choose photos and videos to upload"
+                accept="image/*,video/*"
+                multiple
+                tabindex="-1"
+            />
+            <input
+                type="file"
+                id="upload-camera-input"
+                class="visually-hidden"
+                aria-label="Take a photo to upload"
+                accept="image/*"
+                capture="environment"
+                tabindex="-1"
+            />
         </div>
 
-        <!-- Admin -->
+        <!-- ==================== ADMIN ==================== -->
         <div id="admin-screen" class="screen hidden">
             <header class="app-header">
-                <h1 class="app-title">Admin Panel</h1>
-                <div class="header-right">
-                    <button id="admin-back-btn" class="btn">
-                        ← Back to Files
-                    </button>
+                <div class="app-header-top">
+                    <h1 class="app-title">Admin panel</h1>
+                    <div class="header-right">
+                        <button
+                            id="admin-back-btn"
+                            class="btn btn-outline btn-sm"
+                            type="button"
+                        >
+                            ← Back to files
+                        </button>
+                    </div>
                 </div>
             </header>
 
-            <div class="admin-section">
-                <h2>Create User</h2>
-                <div class="admin-create-form">
-                    <input
-                        type="text"
-                        id="admin-username"
-                        placeholder="Username"
-                        autocomplete="off"
-                    />
-                    <input
-                        type="password"
-                        id="admin-password"
-                        placeholder="Password"
-                        autocomplete="off"
-                    />
-                    <select id="admin-role">
-                        <option value="user">User</option>
-                        <option value="admin">Admin</option>
-                    </select>
+            <section class="admin-section">
+                <h2>Create user</h2>
+                <form id="admin-create-form" class="admin-create-form">
+                    <div class="field">
+                        <label for="admin-username">Username</label>
+                        <input
+                            type="text"
+                            id="admin-username"
+                            autocomplete="off"
+                            autocapitalize="none"
+                            spellcheck="false"
+                        />
+                    </div>
+                    <div class="field">
+                        <label for="admin-password">Password</label>
+                        <input
+                            type="password"
+                            id="admin-password"
+                            autocomplete="new-password"
+                        />
+                    </div>
+                    <div class="field field--role">
+                        <label for="admin-role">Role</label>
+                        <select id="admin-role">
+                            <option value="user">User</option>
+                            <option value="admin">Admin</option>
+                        </select>
+                    </div>
                     <button
                         id="admin-create-btn"
-                        class="btn btn-primary btn-sm"
+                        class="btn btn-primary"
+                        type="submit"
                     >
                         Create
                     </button>
-                </div>
-                <div id="admin-create-error" class="error-banner hidden"></div>
-            </div>
+                </form>
+                <div
+                    id="admin-create-error"
+                    class="error-banner hidden"
+                    role="alert"
+                ></div>
+            </section>
 
-            <div class="admin-section">
-                <h2>Change Your Password</h2>
-                <div class="admin-create-form">
-                    <input
-                        type="password"
-                        id="admin-self-oldpw"
-                        placeholder="Current password"
-                        autocomplete="off"
-                    />
-                    <input
-                        type="password"
-                        id="admin-self-newpw"
-                        placeholder="New password (min 4 chars)"
-                        autocomplete="off"
-                    />
+            <section class="admin-section">
+                <h2>Change your password</h2>
+                <form id="admin-self-pw-form" class="admin-create-form">
+                    <div class="field">
+                        <label for="admin-self-oldpw">Current password</label>
+                        <input
+                            type="password"
+                            id="admin-self-oldpw"
+                            autocomplete="current-password"
+                        />
+                    </div>
+                    <div class="field">
+                        <label for="admin-self-newpw">New password</label>
+                        <input
+                            type="password"
+                            id="admin-self-newpw"
+                            autocomplete="new-password"
+                        />
+                    </div>
                     <button
                         id="admin-self-pw-btn"
-                        class="btn btn-primary btn-sm"
+                        class="btn btn-primary"
+                        type="submit"
                     >
                         Change
                     </button>
-                </div>
-                <div id="admin-self-pw-error" class="error-banner hidden"></div>
-            </div>
+                </form>
+                <div
+                    id="admin-self-pw-error"
+                    class="error-banner hidden"
+                    role="alert"
+                ></div>
+            </section>
 
-            <div class="admin-section">
+            <section class="admin-section">
                 <h2>Users</h2>
                 <div class="table-scroll">
-                    <table class="file-table">
+                    <table class="file-table file-table--admin">
+                        <caption class="visually-hidden">All users</caption>
                         <thead>
                             <tr>
-                                <th>Username</th>
-                                <th>Role</th>
-                                <th>Created</th>
-                                <th>Actions</th>
+                                <th scope="col">Username</th>
+                                <th scope="col">Role</th>
+                                <th scope="col">Created</th>
+                                <th scope="col">Actions</th>
                             </tr>
                         </thead>
                         <tbody id="admin-user-list"></tbody>
                     </table>
                 </div>
+            </section>
+        </div>
+
+        <!-- ==================== SHEETS ==================== -->
+        <div
+            id="upload-sheet"
+            class="sheet hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="upload-sheet-title"
+        >
+            <div class="sheet-backdrop" data-sheet-close></div>
+            <div class="sheet-panel">
+                <div class="sheet-handle" aria-hidden="true"></div>
+                <h2 class="sheet-title" id="upload-sheet-title">
+                    Add to this folder
+                </h2>
+                <div class="sheet-list">
+                    <label class="sheet-item" for="upload-media-input">
+                        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <rect x="3" y="5" width="18" height="14" rx="2" />
+                            <path d="M3 15l4.5-4.5 3 3L15 9l6 6" />
+                            <circle cx="9" cy="9.5" r="1.2" />
+                        </svg>
+                        <span class="sheet-item-text">
+                            <strong>Photos &amp; videos</strong>
+                            <small>Multiple selection supported</small>
+                        </span>
+                    </label>
+                    <label class="sheet-item" for="upload-input">
+                        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8l-5-5z" />
+                            <path d="M14 3v5h5" />
+                        </svg>
+                        <span class="sheet-item-text">
+                            <strong>Any file</strong>
+                            <small>Documents, archives, anything</small>
+                        </span>
+                    </label>
+                    <label class="sheet-item" for="upload-camera-input">
+                        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <path
+                                d="M4 8a2 2 0 012-2h1.5l1-2h7l1 2H18a2 2 0 012 2v9a2 2 0 01-2 2H6a2 2 0 01-2-2V8z"
+                            />
+                            <circle cx="12" cy="12.5" r="3.2" />
+                        </svg>
+                        <span class="sheet-item-text">
+                            <strong>Take a photo</strong>
+                            <small>Opens the camera</small>
+                        </span>
+                    </label>
+                </div>
+                <button
+                    class="btn btn-full sheet-cancel"
+                    type="button"
+                    data-sheet-close
+                >
+                    Cancel
+                </button>
             </div>
         </div>
 
-        <input type="file" id="upload-input" class="hidden" multiple />
+        <div
+            id="action-sheet"
+            class="sheet hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="action-sheet-title"
+        >
+            <div class="sheet-backdrop" data-sheet-close></div>
+            <div class="sheet-panel">
+                <div class="sheet-handle" aria-hidden="true"></div>
+                <h2 class="sheet-title" id="action-sheet-title"></h2>
+                <p class="sheet-sub" id="action-sheet-sub"></p>
+                <div class="sheet-list" id="action-sheet-actions"></div>
+                <button
+                    class="btn btn-full sheet-cancel"
+                    type="button"
+                    data-sheet-close
+                >
+                    Cancel
+                </button>
+            </div>
+        </div>
 
-        <!-- Modals -->
-        <div id="folder-modal" class="modal hidden">
-            <div class="modal-backdrop"></div>
+        <div
+            id="account-sheet"
+            class="sheet hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="account-sheet-title"
+        >
+            <div class="sheet-backdrop" data-sheet-close></div>
+            <div class="sheet-panel">
+                <div class="sheet-handle" aria-hidden="true"></div>
+                <h2 class="sheet-title" id="account-sheet-title">
+                    Account
+                </h2>
+                <p class="sheet-sub" id="account-sheet-sub"></p>
+                <div class="sheet-list" id="account-sheet-actions"></div>
+                <button
+                    class="btn btn-full sheet-cancel"
+                    type="button"
+                    data-sheet-close
+                >
+                    Cancel
+                </button>
+            </div>
+        </div>
+
+        <!-- ==================== PREVIEW ==================== -->
+        <div
+            id="viewer"
+            class="viewer hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-label="File preview"
+        >
+            <div class="viewer-bar">
+                <div class="viewer-heading">
+                    <p class="viewer-title" id="viewer-title"></p>
+                    <p class="viewer-meta" id="viewer-meta"></p>
+                </div>
+                <div class="viewer-tools">
+                    <button id="viewer-download" class="btn btn-sm" type="button">
+                        Download
+                    </button>
+                    <button
+                        id="viewer-close"
+                        class="icon-btn"
+                        type="button"
+                        aria-label="Close preview"
+                    >
+                        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M6 6l12 12M18 6L6 18" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            <div class="viewer-stage" id="viewer-stage"></div>
+            <button
+                id="viewer-prev"
+                class="viewer-nav viewer-nav--prev"
+                type="button"
+                aria-label="Previous file"
+            >
+                <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M15 5l-7 7 7 7" />
+                </svg>
+            </button>
+            <button
+                id="viewer-next"
+                class="viewer-nav viewer-nav--next"
+                type="button"
+                aria-label="Next file"
+            >
+                <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M9 5l7 7-7 7" />
+                </svg>
+            </button>
+        </div>
+
+        <!-- ==================== MODALS ==================== -->
+        <div
+            id="folder-modal"
+            class="modal hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="folder-modal-title"
+        >
+            <div class="modal-backdrop" data-modal-close></div>
             <div class="modal-card">
-                <h2>New Folder</h2>
-                <input
-                    type="text"
-                    id="folder-name-input"
-                    placeholder="Folder name"
-                    autofocus
-                />
+                <h2 id="folder-modal-title">New folder</h2>
+                <form id="folder-form">
+                    <label class="field">
+                        <span>Folder name</span>
+                        <input
+                            type="text"
+                            id="folder-name-input"
+                            autocomplete="off"
+                            enterkeyhint="done"
+                        />
+                    </label>
+                    <div class="modal-actions">
+                        <button
+                            type="button"
+                            class="btn"
+                            data-modal-close
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            type="submit"
+                            id="folder-confirm"
+                            class="btn btn-primary"
+                        >
+                            Create
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div
+            id="rename-modal"
+            class="modal hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="rename-modal-title"
+        >
+            <div class="modal-backdrop" data-modal-close></div>
+            <div class="modal-card">
+                <h2 id="rename-modal-title">Rename</h2>
+                <form id="rename-form">
+                    <label class="field">
+                        <span>New name</span>
+                        <input
+                            type="text"
+                            id="rename-input"
+                            autocomplete="off"
+                            enterkeyhint="done"
+                        />
+                    </label>
+                    <div class="modal-actions">
+                        <button type="button" class="btn" data-modal-close>
+                            Cancel
+                        </button>
+                        <button
+                            type="submit"
+                            id="rename-confirm"
+                            class="btn btn-primary"
+                        >
+                            Rename
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div
+            id="confirm-modal"
+            class="modal hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="confirm-modal-title"
+        >
+            <div class="modal-backdrop" data-modal-close></div>
+            <div class="modal-card">
+                <h2 id="confirm-modal-title">Are you sure?</h2>
+                <p id="confirm-modal-message"></p>
                 <div class="modal-actions">
-                    <button id="folder-cancel" class="btn">Cancel</button
-                    ><button id="folder-confirm" class="btn btn-primary">
-                        Create
+                    <button type="button" class="btn" data-modal-close>
+                        Cancel
+                    </button>
+                    <button type="button" id="confirm-modal-ok" class="btn">
+                        Confirm
                     </button>
                 </div>
             </div>
         </div>
 
-        <div id="rename-modal" class="modal hidden">
-            <div class="modal-backdrop"></div>
+        <div
+            id="prompt-modal"
+            class="modal hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="prompt-modal-title"
+        >
+            <div class="modal-backdrop" data-modal-close></div>
             <div class="modal-card">
-                <h2>Rename</h2>
-                <input type="text" id="rename-input" placeholder="New name" />
-                <div class="modal-actions">
-                    <button id="rename-cancel" class="btn">Cancel</button
-                    ><button id="rename-confirm" class="btn btn-primary">
-                        Rename
-                    </button>
-                </div>
+                <h2 id="prompt-modal-title">Enter a value</h2>
+                <p id="prompt-modal-message"></p>
+                <form id="prompt-form">
+                    <label class="field">
+                        <span id="prompt-modal-label">Value</span>
+                        <input
+                            type="password"
+                            id="prompt-modal-input"
+                            autocomplete="new-password"
+                        />
+                    </label>
+                    <div class="modal-actions">
+                        <button type="button" class="btn" data-modal-close>
+                            Cancel
+                        </button>
+                        <button
+                            type="submit"
+                            id="prompt-modal-ok"
+                            class="btn btn-primary"
+                        >
+                            Save
+                        </button>
+                    </div>
+                </form>
             </div>
         </div>
 
-        <div id="delete-modal" class="modal hidden">
-            <div class="modal-backdrop"></div>
-            <div class="modal-card">
-                <h2>Delete</h2>
-                <p>
-                    Are you sure you want to delete
-                    <strong id="delete-name"></strong>?
-                </p>
-                <div class="modal-actions">
-                    <button id="delete-cancel" class="btn">Cancel</button
-                    ><button id="delete-confirm" class="btn btn-danger">
-                        Delete
-                    </button>
-                </div>
-            </div>
-        </div>
-
-        <div id="publish-modal" class="modal hidden">
-            <div class="modal-backdrop"></div>
+        <div
+            id="publish-modal"
+            class="modal hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="publish-modal-title"
+        >
+            <div class="modal-backdrop" data-modal-close></div>
             <div class="modal-card publish-card">
-                <h2>Public Link</h2>
+                <h2 id="publish-modal-title">Public link</h2>
                 <p class="publish-path" id="publish-path"></p>
                 <div class="publish-url-box">
-                    <input type="text" id="publish-url-input" readonly /><button
+                    <label class="visually-hidden" for="publish-url-input"
+                        >Public URL</label
+                    >
+                    <input type="text" id="publish-url-input" readonly />
+                    <button
                         id="publish-copy-btn"
                         class="btn btn-sm"
+                        type="button"
                     >
                         Copy
                     </button>
                 </div>
                 <div class="modal-actions">
-                    <button id="publish-close" class="btn">Close</button
-                    ><button
+                    <button type="button" class="btn" data-modal-close>
+                        Close
+                    </button>
+                    <button
                         id="publish-revoke-btn"
                         class="btn btn-danger btn-sm"
+                        type="button"
                     >
                         Revoke
                     </button>
                 </div>
             </div>
         </div>
+
+        <!-- ==================== TOASTS ==================== -->
+        <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
 
         <script src="/app.js"></script>
     </body>
