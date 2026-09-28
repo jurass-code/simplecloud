@@ -66,7 +66,19 @@
     text: ["txt", "log", "md", "csv", "json"],
   };
   var MAX_TEXT_PREVIEW = 262144; // 256 KB is plenty for a glance
-  var UPLOAD_CHUNK_SIZE = 4;
+  var UPLOAD_CHUNK_SIZE = 4; // files per multipart request (small files only)
+  // A file bigger than one slice is uploaded slice by slice: a dropped
+  // connection then costs one slice instead of the whole transfer, and each
+  // request stays well inside the server/proxy request timeouts.
+  var DEFAULT_SLICE_BYTES = 8 * 1024 * 1024;
+  var SLICE_RETRIES = 4; // per slice, with growing backoff
+  var SLICE_RETRY_BUDGET = 40; // per file, so a dead network cannot loop forever
+  // No bytes for this long means the request is dead even though no error
+  // arrived (phone lost signal, proxy swallowed it). Without this the progress
+  // bar just freezes and the user never learns anything went wrong.
+  var SLICE_STALL_MS = 45000;
+  var MULTIPART_STALL_MS = 90000;
+  var MAX_MULTIPART_BYTES = 16 * 1024 * 1024; // cap on one small-file request
 
   // ======================================================================
   // State
@@ -1736,6 +1748,12 @@
         status: "pending",
         message: "",
         attempts: 0,
+        // slice-upload bookkeeping
+        uploadId: null,
+        received: 0,
+        inFlight: 0,
+        chunkSize: 0,
+        chunkAttempts: 0,
       };
       if (item.size > state.config.maxUploadBytes) {
         item.status = "error";
@@ -1744,7 +1762,10 @@
       } else if (!item.size) {
         item.status = "error";
         item.permanent = true;
-        item.message = "Empty file";
+        // iOS hands over a 0-byte File for a photo/video that is not on the
+        // device yet (iCloud), and the upload would sit there doing nothing.
+        item.message =
+          "Empty file — if it is stored in iCloud, download it in Photos first";
       }
       return item;
     });
@@ -1753,25 +1774,52 @@
     uploadState.active = true;
     hideError();
     renderUploadDock();
-    runUploadQueue().then(function () {
-      uploadState.active = false;
-      uploadState.xhr = null;
-      renderUploadDock();
-      loadFiles();
-      var okCount = uploadState.items.filter(function (i) { return i.status === "ok"; }).length;
-      var failCount = uploadState.items.filter(function (i) { return i.status === "error"; }).length;
-      if (okCount && !failCount) toast("Uploaded " + okCount + " file(s)", "success");
-      else if (okCount && failCount) toast(okCount + " uploaded, " + failCount + " failed", "error");
-      else if (failCount) {
-        var firstError = uploadState.items.find(function (i) { return i.status === "error"; });
-        toast("Upload failed: " + (firstError ? firstError.message : "unknown error"), "error");
-      }
-      if (!failCount) {
-        setTimeout(function () {
-          if (!uploadState.active) dismissUploadDock();
-        }, 4000);
-      }
+    runUploadQueue().then(finishUploadRun);
+  }
+
+  // Shared epilogue: report the outcome and let the user continue a paused
+  // upload instead of silently dropping it.
+  function finishUploadRun() {
+    uploadState.active = false;
+    uploadState.xhr = null;
+    renderUploadDock();
+    loadFiles();
+    checkResumableUploads();
+    var items = uploadState.items;
+    var okCount = items.filter(function (i) { return i.status === "ok"; }).length;
+    // A paused (resumable) upload is unfinished work, never a silent success:
+    // the dock must stay with a way to continue.
+    var paused = items.filter(function (i) { return i.status === "paused"; });
+    var failed = items.filter(function (i) {
+      return i.status === "error" || i.status === "pending";
     });
+    var unfinished = paused.length + failed.length;
+    if (okCount && !unfinished) {
+      toast("Uploaded " + okCount + " file(s)", "success");
+    } else if (paused.length) {
+      var firstPaused = paused[0];
+      toast(
+        firstPaused.received > 0
+          ? "Upload interrupted — " +
+              formatSize(firstPaused.received) +
+              " of " +
+              formatSize(firstPaused.size) +
+              " sent. Press Continue to finish."
+          : "Upload interrupted — nothing was sent yet (" +
+              formatSize(firstPaused.size) +
+              "). Check your connection, then press Continue.",
+        "error",
+      );
+    } else if (okCount && unfinished) {
+      toast(okCount + " uploaded, " + unfinished + " failed", "error");
+    } else if (failed.length) {
+      toast("Upload failed: " + (failed[0].message || "unknown error"), "error");
+    }
+    if (!unfinished) {
+      setTimeout(function () {
+        if (!uploadState.active) dismissUploadDock();
+      }, 4000);
+    }
   }
 
   function uploadChunk(group) {
@@ -1786,13 +1834,23 @@
         "POST",
         "/api/files/upload?path=" + encodeURIComponent(state.currentPath),
       );
+      var lastProgress = Date.now();
+      var stalled = false;
+      var stallWatch = setInterval(function () {
+        if (Date.now() - lastProgress < MULTIPART_STALL_MS) return;
+        stalled = true;
+        xhr.abort();
+      }, 2000);
       xhr.upload.addEventListener("progress", function (e) {
+        lastProgress = Date.now();
         group.forEach(function (item) {
           if (item.status === "pending") item.status = "uploading";
         });
-        updateUploadProgress(e.loaded, e.total);
+        distributeGroupProgress(group, e.loaded);
+        updateUploadProgress();
       });
       xhr.addEventListener("load", function () {
+        clearInterval(stallWatch);
         var data = null;
         try {
           data = JSON.parse(xhr.responseText);
@@ -1809,13 +1867,370 @@
         }
       });
       xhr.addEventListener("error", function () {
+        clearInterval(stallWatch);
         resolve({ ok: false, message: "Network error while uploading" });
       });
       xhr.addEventListener("abort", function () {
+        clearInterval(stallWatch);
+        if (stalled) {
+          resolve({
+            ok: false,
+            stalled: true,
+            message:
+              "Upload stalled — no data moved for " +
+              Math.round(MULTIPART_STALL_MS / 1000) +
+              "s. Check your connection.",
+          });
+          return;
+        }
         resolve({ ok: false, aborted: true, message: "Cancelled" });
       });
       xhr.send(fd);
     });
+  }
+
+  // ---- Slice (resumable) upload for big files ----
+  // The server keeps the bytes it already has, so every failure below can be
+  // retried from the offset the server confirms instead of from zero.
+
+  function parseJson(text) {
+    if (!text) return null;
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function sleep(ms) {
+    return new Promise(function (resolve) {
+      setTimeout(resolve, ms);
+    });
+  }
+
+  function sliceBytes() {
+    var n = state.config && state.config.uploadChunkBytes;
+    return typeof n === "number" && n > 0 ? n : DEFAULT_SLICE_BYTES;
+  }
+
+  function needsChunkedUpload(item) {
+    return item.size > sliceBytes();
+  }
+
+  // Ask the server to open (or hand back) a session for this exact file.
+  function startSliceSession(item) {
+    return new Promise(function (resolve) {
+      var xhr = new XMLHttpRequest();
+      xhr.open("POST", "/api/files/upload/start");
+      xhr.setRequestHeader("Content-Type", "application/json");
+      xhr.addEventListener("load", function () {
+        var data = parseJson(xhr.responseText);
+        if (
+          xhr.status >= 200 &&
+          xhr.status < 300 &&
+          data &&
+          data.uploadId
+        ) {
+          resolve({
+            ok: true,
+            uploadId: data.uploadId,
+            received: typeof data.received === "number" ? data.received : 0,
+            chunkBytes: data.chunkBytes || 0,
+          });
+          return;
+        }
+        var message =
+          (data && data.error && data.error.message) ||
+          "Could not start the upload (" + xhr.status + ")";
+        resolve({
+          ok: false,
+          // 413 (too large) / 400 (bad name) will not get better on a retry.
+          permanent: xhr.status === 413 || xhr.status === 400,
+          message: message,
+        });
+      });
+      xhr.addEventListener("error", function () {
+        resolve({
+          ok: false,
+          message: "Connection lost before the upload started",
+        });
+      });
+      xhr.send(
+        JSON.stringify({
+          path: state.currentPath,
+          name: item.name,
+          size: item.size,
+        }),
+      );
+    });
+  }
+
+  // Send one slice. A 409 is not an error: it means the server is at a
+  // different offset than we thought and tells us where to resume.
+  function sendSlice(item, offset, blob) {
+    return new Promise(function (resolve) {
+      var xhr = new XMLHttpRequest();
+      uploadState.xhr = xhr;
+      xhr.open(
+        "PUT",
+        "/api/files/upload/chunk?id=" +
+          encodeURIComponent(item.uploadId) +
+          "&offset=" +
+          offset,
+      );
+      xhr.setRequestHeader("Content-Type", "application/octet-stream");
+      var lastProgress = Date.now();
+      var stalled = false;
+      var stallWatch = setInterval(function () {
+        if (Date.now() - lastProgress < SLICE_STALL_MS) return;
+        stalled = true;
+        xhr.abort();
+      }, 2000);
+      xhr.upload.addEventListener("progress", function (e) {
+        lastProgress = Date.now();
+        item.inFlight = e.loaded;
+        updateUploadProgress();
+      });
+      var done = function (payload) {
+        clearInterval(stallWatch);
+        item.inFlight = 0;
+        resolve(payload);
+      };
+      xhr.addEventListener("load", function () {
+        var data = parseJson(xhr.responseText);
+        if (
+          xhr.status >= 200 &&
+          xhr.status < 300 &&
+          data &&
+          typeof data.received === "number"
+        ) {
+          done({ ok: true, received: data.received });
+        } else if (xhr.status === 409 && data && typeof data.received === "number") {
+          done({
+            ok: true,
+            received: data.received,
+            resynced: data.received !== offset,
+          });
+        } else if (xhr.status === 404) {
+          done({ ok: false, restart: true, message: "Upload session expired" });
+        } else {
+          done({
+            ok: false,
+            status: xhr.status,
+            // 400/403/413/415 will fail identically on every retry, so the
+            // caller must not burn the retry budget or offer "Continue".
+            fatal:
+              xhr.status === 400 ||
+              xhr.status === 403 ||
+              xhr.status === 413 ||
+              xhr.status === 415,
+            message:
+              (data && data.error && data.error.message) ||
+              "Slice failed (" + xhr.status + ")",
+          });
+        }
+      });
+      xhr.addEventListener("error", function () {
+        done({ ok: false, status: 0, message: "Connection lost" });
+      });
+      xhr.addEventListener("abort", function () {
+        if (stalled) {
+          done({ ok: false, stalled: true, message: "Connection stalled" });
+          return;
+        }
+        done({ ok: false, aborted: true, message: "Cancelled" });
+      });
+      xhr.send(blob);
+    });
+  }
+
+  function finishSliceSession(item) {
+    return new Promise(function (resolve) {
+      var xhr = new XMLHttpRequest();
+      xhr.open(
+        "POST",
+        "/api/files/upload/finish?id=" + encodeURIComponent(item.uploadId),
+      );
+      xhr.addEventListener("load", function () {
+        var data = parseJson(xhr.responseText);
+        if (
+          xhr.status >= 200 &&
+          xhr.status < 300 &&
+          data &&
+          data.files &&
+          data.files.length
+        ) {
+          resolve({ ok: true, files: data.files });
+          return;
+        }
+        resolve({
+          ok: false,
+          // The bytes are still on the server unless it rejected the name.
+          resumable: /exist/i.test(
+            (data && data.error && data.error.message) || "",
+          )
+            ? false
+            : true,
+          restart: xhr.status === 409,
+          message:
+            (data && data.error && data.error.message) ||
+            "Could not finish the upload (" + xhr.status + ")",
+        });
+      });
+      xhr.addEventListener("error", function () {
+        resolve({
+          ok: false,
+          resumable: true,
+          message: "Connection lost while finishing the upload",
+        });
+      });
+      xhr.send();
+    });
+  }
+
+  function discardSliceSession(item) {
+    var id = item.uploadId;
+    item.uploadId = null;
+    item.received = 0;
+    item.inFlight = 0;
+    if (!id) return Promise.resolve();
+    return new Promise(function (resolve) {
+      var xhr = new XMLHttpRequest();
+      xhr.open(
+        "DELETE",
+        "/api/files/upload/session?id=" + encodeURIComponent(id),
+      );
+      xhr.addEventListener("loadend", function () {
+        resolve();
+      });
+      xhr.send();
+    });
+  }
+
+  async function uploadInSlices(item) {
+    if (!item.uploadId) {
+      var started = await startSliceSession(item);
+      if (!started.ok) {
+        return {
+          ok: false,
+          permanent: started.permanent,
+          message: started.message,
+        };
+      }
+      item.uploadId = started.uploadId;
+      item.chunkSize = started.chunkBytes || sliceBytes();
+      item.received = Math.min(started.received || 0, item.size);
+      if (item.received > 0) {
+        item.message = "Continuing from " + formatSize(item.received);
+        renderUploadDock();
+      }
+    }
+    if (!item.chunkSize) item.chunkSize = sliceBytes();
+
+    while (item.received < item.size) {
+      if (uploadState.cancelled) {
+        return { ok: false, aborted: true, message: "Cancelled" };
+      }
+      var offset = item.received;
+      var blob = item.file.slice(
+        offset,
+        Math.min(item.size, offset + item.chunkSize),
+      );
+      var attempt = 0;
+      var advanced = false;
+      while (!advanced) {
+        var res = await sendSlice(item, offset, blob);
+        if (res.aborted) {
+          return { ok: false, aborted: true, message: "Cancelled" };
+        }
+        if (res.ok) {
+          item.received = Math.min(res.received, item.size);
+          advanced = true;
+          renderUploadDock();
+          break;
+        }
+        if (res.stalled) {
+          // Not a user cancel: keep the session and retry this slice.
+          item.message = "Connection stalled — retrying (" + attempt + "/" + SLICE_RETRIES + ")";
+        }
+        if (res.restart) {
+          item.uploadId = null;
+          item.received = 0;
+          return {
+            ok: false,
+            resumable: false,
+            message:
+              "Upload session expired — press Retry to start this file again",
+          };
+        }
+        if (res.fatal) {
+          return {
+            ok: false,
+            resumable: false,
+            message: res.message || "Upload failed",
+          };
+        }
+        attempt += 1;
+        item.chunkAttempts += 1;
+        if (attempt > SLICE_RETRIES || item.chunkAttempts > SLICE_RETRY_BUDGET) {
+          // The session is still on the server, so Continue resumes from the
+          // last confirmed offset — even when nothing has landed yet.
+          return {
+            ok: false,
+            resumable: !!item.uploadId,
+            message:
+              (res.message || "Upload failed") +
+              (item.received > 0
+                ? " — stopped at " +
+                  formatSize(item.received) +
+                  " of " +
+                  formatSize(item.size)
+                : " — nothing accepted yet, press Continue to retry"),
+          };
+        }
+        item.message =
+          (res.stalled ? "Connection stalled" : "Connection lost") +
+          " — retrying (" + attempt + "/" + SLICE_RETRIES + ")";
+        renderUploadDock();
+        await sleep(1000 * attempt);
+      }
+    }
+
+    var finished = await finishSliceSession(item);
+    if (!finished.ok) {
+      return {
+        ok: false,
+        resumable: finished.resumable,
+        restart: finished.restart,
+        message: finished.message,
+      };
+    }
+    return { ok: true, files: finished.files };
+  }
+
+  // One item through whichever transport fits it.
+  async function uploadItemByTransport(item) {
+    if (needsChunkedUpload(item)) {
+      var slices = await uploadInSlices(item);
+      if (slices.ok) {
+        return { ok: true, res: slices.files && slices.files[0] };
+      }
+      return {
+        ok: false,
+        aborted: slices.aborted,
+        message: slices.message,
+        resumable: slices.resumable,
+        permanent: slices.permanent,
+        restart: slices.restart,
+      };
+    }
+    var single = await uploadChunk([item]);
+    return {
+      ok: !!single.ok,
+      aborted: single.aborted,
+      message: single.message,
+      res: single.files && single.files[0],
+    };
   }
 
   function chunk(arr, size) {
@@ -1824,55 +2239,134 @@
     return out;
   }
 
+  // Small files travel together, but never as one enormous request: a proxy in
+  // front of the app is far more likely to cap a 30 MB body than a 4 MB one.
+  function uploadGroups(items, maxFiles, maxBytes) {
+    var out = [];
+    var current = [];
+    var bytes = 0;
+    items.forEach(function (item) {
+      var size = Math.max(1, item.size);
+      if (
+        current.length &&
+        (current.length >= maxFiles || bytes + size > maxBytes)
+      ) {
+        out.push(current);
+        current = [];
+        bytes = 0;
+      }
+      current.push(item);
+      bytes += size;
+    });
+    if (current.length) out.push(current);
+    return out;
+  }
+
+  // Map one server response onto a queue item (shared by both transports).
+  function applyUploadResult(item, res, fallbackMessage) {
+    if (res && res.status === "ok") {
+      item.status = "ok";
+      item.name = res.name;
+      item.path = res.path;
+      item.received = item.size;
+      item.inFlight = 0;
+      item.message = "";
+      return;
+    }
+    var message = (res && res.message) || fallbackMessage || "Upload failed";
+    if (/exist/i.test(message) && item.attempts < 3) {
+      // Name taken: drop any partial slice session, the retry pass renames it.
+      item.status = "pending";
+      item.message = "Name taken — retrying";
+      item.uploadId = null;
+      item.received = 0;
+      item.inFlight = 0;
+      return;
+    }
+    item.status = "error";
+    item.message = message;
+    item.inFlight = 0;
+  }
+
+  // "paused" is a failure we can continue from without re-sending what the
+  // server already has — that is the whole point of slicing.
+  function failItem(item, message, opts) {
+    var options = opts || {};
+    item.status = options.resumable ? "paused" : "error";
+    item.resumable = !!options.resumable;
+    if (options.permanent) item.permanent = true;
+    item.inFlight = 0;
+    item.message = message;
+  }
+
   async function runUploadQueue() {
     var items = uploadState.items;
     var pending = items.filter(function (i) { return i.status === "pending"; });
-    var groups = chunk(pending, UPLOAD_CHUNK_SIZE);
+    // Small files go as multipart batches; a big video goes slice by slice.
+    var large = pending.filter(needsChunkedUpload);
+    var small = pending.filter(function (i) { return !needsChunkedUpload(i); });
+    var groups = uploadGroups(small, UPLOAD_CHUNK_SIZE, MAX_MULTIPART_BYTES);
+    var retriedGroups = {};
 
     for (var g = 0; g < groups.length; g++) {
       if (uploadState.cancelled) break;
       var group = groups[g];
       group.forEach(function (i) {
         i.status = "uploading";
+        i.inFlight = 0;
       });
       renderUploadDock();
       var result = await uploadChunk(group);
       if (result.aborted) {
         group.forEach(function (i) {
-          if (i.status !== "ok") {
-            i.status = "error";
-            i.message = "Cancelled";
-          }
+          if (i.status !== "ok") failItem(i, "Cancelled");
         });
         break;
       }
       if (!result.ok) {
+        // A stalled small-file request is worth one silent retry before telling
+        // the user; anything else (413, 400, real error) is reported as-is.
+        if (result.stalled && !retriedGroups[g]) {
+          retriedGroups[g] = true;
+          group.forEach(function (i) {
+            i.status = "pending";
+          });
+          g -= 1; // run this group again
+          await sleep(2000);
+          continue;
+        }
         group.forEach(function (i) {
-          if (i.status !== "ok") {
-            i.status = "error";
-            i.message = result.message;
-          }
+          if (i.status !== "ok") failItem(i, result.message);
         });
         renderUploadDock();
         continue;
       }
       group.forEach(function (item, index) {
-        var res = result.files[index];
-        if (res && res.status === "ok") {
-          item.status = "ok";
-          item.name = res.name;
-          item.path = res.path;
-        } else {
-          var message = (res && res.message) || "Upload failed";
-          if (/exist/i.test(message) && item.attempts < 3) {
-            item.status = "pending";
-            item.message = "Name taken — retrying";
-          } else {
-            item.status = "error";
-            item.message = message;
-          }
-        }
+        applyUploadResult(item, result.files[index], "Upload failed");
       });
+      renderUploadDock();
+    }
+
+    for (var l = 0; l < large.length; l++) {
+      if (uploadState.cancelled) break;
+      var big = large[l];
+      big.status = "uploading";
+      big.inFlight = 0;
+      renderUploadDock();
+      var outcome = await uploadItemByTransport(big);
+      if (outcome.aborted) {
+        failItem(big, "Cancelled");
+        break;
+      }
+      if (!outcome.ok) {
+        failItem(big, outcome.message, {
+          resumable: outcome.resumable,
+          permanent: outcome.permanent,
+        });
+        renderUploadDock();
+        continue;
+      }
+      applyUploadResult(big, outcome.res, "Upload failed");
       renderUploadDock();
     }
 
@@ -1888,26 +2382,78 @@
       item.attempts += 1;
       item.name = uniqueName(item.name, takenAll);
       item.status = "uploading";
+      item.inFlight = 0;
       renderUploadDock();
-      var single = await uploadChunk([item]);
-      var first = single.files && single.files[0];
-      if (single.ok && first && first.status === "ok") {
-        item.status = "ok";
-        item.name = first.name;
-        item.path = first.path;
-      } else if (item.attempts >= 3) {
-        item.status = "error";
-        item.message = (first && first.message) || single.message || "Upload failed";
+      var retryOutcome = await uploadItemByTransport(item);
+      if (retryOutcome.aborted) {
+        failItem(item, "Cancelled");
+        break;
+      }
+      if (retryOutcome.ok) {
+        applyUploadResult(item, retryOutcome.res, "Upload failed");
+      } else if (item.attempts >= 3 || retryOutcome.permanent) {
+        failItem(item, retryOutcome.message || "Upload failed", {
+          resumable: retryOutcome.resumable,
+          permanent: true,
+        });
       } else {
         item.status = "pending";
       }
       renderUploadDock();
     }
+
     // Any leftover pending item is a real failure.
     items.forEach(function (i) {
-      if (i.status === "pending") {
-        i.status = "error";
-        i.message = i.message || "Upload failed";
+      if (i.status === "pending") failItem(i, i.message || "Upload failed");
+    });
+  }
+
+  function itemSentBytes(item) {
+    var size = Math.max(1, item.size);
+    if (item.status === "ok") return size;
+    if (item.status === "error" && !item.resumable) return size;
+    return Math.min(size, (item.received || 0) + (item.inFlight || 0));
+  }
+
+  function uploadTotals() {
+    var total = 0;
+    var sent = 0;
+    uploadState.items.forEach(function (item) {
+      total += Math.max(1, item.size);
+      sent += itemSentBytes(item);
+    });
+    return { total: total, sent: sent };
+  }
+
+  // A multipart request carries a batch: the bytes arrive in file order, so
+  // the group can be advanced in order as the request progresses.
+  function distributeGroupProgress(group, loaded) {
+    var consumed = 0;
+    group.forEach(function (item) {
+      var size = Math.max(1, item.size);
+      item.inFlight = Math.max(0, Math.min(size, (loaded || 0) - consumed));
+      consumed += size;
+    });
+  }
+
+  // Cheap update for progress events: only the bar and the per-row percentage,
+  // never a rebuild of the list (that happens at slice boundaries).
+  function updateUploadProgress() {
+    var fill = $("#upload-bar-fill");
+    if (!fill) return;
+    var totals = uploadTotals();
+    fill.style.width =
+      Math.min(100, Math.round((totals.sent / totals.total) * 100)) + "%";
+    var list = $("#upload-list");
+    if (!list) return;
+    uploadState.items.forEach(function (item, index) {
+      var row = list.children[index];
+      if (!row) return;
+      var status = row.querySelector(".upload-row-status");
+      if (!status) return;
+      if (item.status === "uploading" && item.size) {
+        status.textContent =
+          Math.round((itemSentBytes(item) / item.size) * 100) + "%";
       }
     });
   }
@@ -1921,11 +2467,9 @@
     var done = items.filter(function (i) {
       return i.status === "ok" || i.status === "error";
     }).length;
-    var totalBytes = items.reduce(function (a, i) { return a + Math.max(1, i.size); }, 0);
-    var sentBytes = items.reduce(function (a, i) {
-      if (i.status === "ok" || i.status === "error") return a + Math.max(1, i.size);
-      return a;
-    }, 0);
+    var totals = uploadTotals();
+    var totalBytes = totals.total;
+    var sentBytes = totals.sent;
 
     var dock = $("#upload-dock");
     if (!dock) {
@@ -1946,76 +2490,100 @@
       $("#upload-cancel-btn").addEventListener("click", function () {
         uploadState.cancelled = true;
         if (uploadState.xhr) uploadState.xhr.abort();
+        // Whatever the server holds for this run is no longer wanted.
+        uploadState.items.forEach(function (i) {
+          discardSliceSession(i);
+        });
         dismissUploadDock();
       });
-      $("#upload-hide-btn").addEventListener("click", dismissUploadDock);
+      $("#upload-hide-btn").addEventListener("click", function () {
+        dismissUploadDock();
+        // The partial bytes are still on the server: surface them again.
+        checkResumableUploads();
+      });
       $("#upload-minimize-btn").addEventListener("click", toggleUploadDock);
       $("#upload-retry-btn").addEventListener("click", function () {
         var failed = uploadState.items.filter(function (i) {
-          return i.status === "error" && !i.permanent;
+          return (i.status === "error" || i.status === "paused") && !i.permanent;
         });
         if (!failed.length) return;
         failed.forEach(function (i) {
           i.status = "pending";
-          i.message = "";
+          // A slice upload keeps its session, so Retry continues from the
+          // offset the server confirmed instead of re-sending the whole file.
+          i.message =
+            i.resumable && i.received > 0
+              ? "Continuing from " + formatSize(i.received)
+              : "";
+          i.resumable = false;
+          i.chunkAttempts = 0;
         });
         uploadState.cancelled = false;
         uploadState.active = true;
         renderUploadDock();
-        runUploadQueue().then(function () {
-          uploadState.active = false;
-          renderUploadDock();
-          loadFiles();
-        });
+        runUploadQueue().then(finishUploadRun);
       });
     }
     uploadState.dock = dock;
 
-    var failedCount = items.filter(function (i) { return i.status === "error"; }).length;
+    var pausedCount = items.filter(function (i) {
+      return i.status === "paused";
+    }).length;
+    var okCount = items.filter(function (i) {
+      return i.status === "ok";
+    }).length;
+    // "Upload finished" must mean every file actually arrived — a dock that
+    // says "finished 1/1" over a failed file is how an upload disappears
+    // without an error.
     $("#upload-dock-title").textContent = uploadState.active
       ? "Uploading " + Math.min(done + 1, items.length) + " of " + items.length + "…"
-      : done === items.length
-        ? "Upload finished"
-        : "Upload stopped";
+      : pausedCount
+        ? "Upload interrupted"
+        : okCount === items.length
+          ? "Upload finished"
+          : okCount
+            ? "Upload partly failed"
+            : "Upload failed";
     $("#upload-dock-count").textContent = done + "/" + items.length;
     $("#upload-bar-fill").style.width = Math.round((sentBytes / totalBytes) * 100) + "%";
     $("#upload-cancel-btn").classList.toggle("hidden", !uploadState.active);
     $("#upload-hide-btn").classList.toggle("hidden", uploadState.active);
     var retryable = items.filter(function (i) {
-      return i.status === "error" && !i.permanent;
+      return (i.status === "error" || i.status === "paused") && !i.permanent;
     }).length;
     $("#upload-retry-btn").classList.toggle("hidden", retryable === 0);
+    var pausedAny = items.some(function (i) {
+      return i.status === "paused" || (i.status === "error" && i.resumable);
+    });
+    $("#upload-retry-btn").textContent = pausedAny ? "Continue" : "Retry failed";
     $("#upload-list").innerHTML = items
-      .map(function (i) {
-        var statusText =
-          i.status === "ok"
-            ? "✓"
-            : i.status === "error"
-              ? i.message || "Failed"
-              : i.status === "uploading"
-                ? "uploading…"
-                : "queued";
+      .map(function (i, index) {
+        var statusText;
+        if (i.status === "ok") statusText = "✓";
+        else if (i.status === "error") statusText = i.message || "Failed";
+        else if (i.status === "paused") statusText = i.message || "Interrupted";
+        else if (i.status === "uploading") {
+          statusText = i.size
+            ? Math.round((itemSentBytes(i) / Math.max(1, i.size)) * 100) + "%"
+            : "uploading…";
+        } else statusText = "queued";
         return (
-          '<li class="upload-row upload-row--' + i.status + '">' +
-          (i.status === "ok" ? ICONS.check : i.status === "error" ? ICONS.alert : ICONS.file) +
+          '<li id="upload-row-' +
+          index +
+          '" class="upload-row upload-row--' +
+          i.status +
+          '">' +
+          (i.status === "ok"
+            ? ICONS.check
+            : i.status === "error" || i.status === "paused"
+              ? ICONS.alert
+              : ICONS.file) +
           '<span class="upload-row-name">' + eh(i.name) + "</span>" +
           '<span class="upload-row-status">' + eh(statusText) + "</span></li>"
         );
       })
       .join("");
     positionFloatingUi();
-  }
-
-  function updateUploadProgress(loaded, total) {
-    var fill = $("#upload-bar-fill");
-    if (!fill) return;
-    var items = uploadState.items;
-    var settled = items.reduce(function (a, i) {
-      return a + (i.status === "ok" || i.status === "error" ? Math.max(1, i.size) : 0);
-    }, 0);
-    var totalBytes = items.reduce(function (a, i) { return a + Math.max(1, i.size); }, 0);
-    var inFlight = Math.max(0, Math.min(loaded || 0, total || 0));
-    fill.style.width = Math.min(100, Math.round(((settled + inFlight) / totalBytes) * 100)) + "%";
   }
 
   function dismissUploadDock() {
@@ -2039,6 +2607,79 @@
       );
       btn.textContent = uploadState.minimized ? "Expand" : "Minimize";
     }
+    positionFloatingUi();
+  }
+
+  // ---- Interrupted uploads worth continuing ----
+  // The server is the source of truth here: it knows which files are half
+  // received, even across a browser reload or a different device.
+  async function checkResumableUploads() {
+    if (!state.user || appScreen.classList.contains("hidden")) return;
+    var res;
+    try {
+      res = await api("GET", "/api/files/upload/status");
+    } catch (err) {
+      return; // a status check must never break the file list
+    }
+    var live = {};
+    uploadState.items.forEach(function (item) {
+      if (item.uploadId) live[item.uploadId] = true;
+    });
+    var sessions = ((res && res.sessions) || []).filter(function (session) {
+      return !live[session.uploadId];
+    });
+    renderResumeBanner(sessions);
+  }
+
+  function renderResumeBanner(sessions) {
+    var banner = $("#resume-banner");
+    if (!sessions || !sessions.length) {
+      if (banner) banner.remove();
+      return;
+    }
+    var host = $("#main-content");
+    if (!host) return;
+    if (!banner) {
+      banner = create(
+        '<div id="resume-banner" class="resume-banner" role="status"></div>',
+      );
+      host.insertBefore(banner, host.firstChild);
+    }
+    var session = sessions[0];
+    var more = sessions.length > 1 ? " (+" + (sessions.length - 1) + " more)" : "";
+    banner.innerHTML =
+      '<div class="resume-banner-text">' +
+      "<strong>Interrupted upload" +
+      (sessions.length > 1 ? "s" : "") +
+      "</strong>" +
+      "<span>" +
+      eh(session.name) +
+      more +
+      " — " +
+      formatSize(session.received) +
+      " of " +
+      formatSize(session.size) +
+      " already sent. Pick the same file to continue where it stopped." +
+      "</span></div>" +
+      '<div class="resume-banner-actions">' +
+      '<button type="button" class="btn btn-sm" id="resume-pick-btn">Choose file</button>' +
+      '<button type="button" class="btn btn-sm btn-outline" id="resume-discard-btn">Discard</button>' +
+      "</div>";
+    $("#resume-pick-btn").addEventListener("click", function () {
+      uploadInput.click();
+    });
+    $("#resume-discard-btn").addEventListener("click", async function () {
+      try {
+        await api(
+          "DELETE",
+          "/api/files/upload/session?id=" + encodeURIComponent(session.uploadId),
+        );
+      } catch (err) {
+        /* the session is gone anyway */
+      }
+      renderResumeBanner(sessions.slice(1));
+      toast("Interrupted upload discarded", "success");
+    });
     positionFloatingUi();
   }
 
@@ -2380,6 +3021,7 @@
     clearSelection();
     buildBreadcrumbs();
     loadFiles();
+    checkResumableUploads();
   }
 
   // ======================================================================

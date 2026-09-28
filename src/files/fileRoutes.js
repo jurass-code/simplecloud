@@ -8,6 +8,9 @@ const { asyncRoute } = require("../shared/asyncRoute");
 const { isValidName } = require("./pathSafety");
 const { mimeFor, isInlineSafe } = require("./mimeTypes");
 const { MAX_FILES_PER_UPLOAD } = require("../shared/limits");
+const {
+  registerChunkedUploadRoutes,
+} = require("./chunkedUploadRoutes");
 
 // multer/busboy decode multipart filenames as latin1, so a UTF-8 name such as
 // "Снимок экрана 2026-01-01.png" (macOS/iOS with a non-English locale, very
@@ -60,7 +63,7 @@ function contentDisposition(kind, filename) {
   );
 }
 
-function createFileRoutes(rootFileService, publicStore, thumbnailService) {
+function createFileRoutes(rootFileService, publicStore, thumbnailService, options) {
   const router = Router();
 
   const upload = multer({
@@ -201,6 +204,14 @@ function createFileRoutes(rootFileService, publicStore, thumbnailService) {
       stream.pipe(res);
     }),
   );
+
+  if (options && options.uploadSessions) {
+    registerChunkedUploadRoutes(router, {
+      config: options.config,
+      uploadSessions: options.uploadSessions,
+      serviceFor: svc,
+    });
+  }
 
   router.post(
     "/upload",

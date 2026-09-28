@@ -9,6 +9,9 @@ const { SessionStore } = require("./auth/sessions");
 const { createAuthMiddleware } = require("./auth/authMiddleware");
 const { FileService } = require("./files/fileService");
 const { createFileRoutes } = require("./files/fileRoutes");
+const {
+  createUploadSessionStore,
+} = require("./files/uploadSessions");
 const { PublicStore } = require("./files/publicStore");
 const { ThumbnailService } = require("./files/thumbnailService");
 const { resolveStoragePath } = require("./files/pathSafety");
@@ -181,6 +184,9 @@ function createApp(config) {
   const fileService = new FileService(config.storageDir, config.maxUploadBytes);
   const publicStore = new PublicStore(config.publicFile);
   const thumbnailService = new ThumbnailService(config.storageDir);
+  const uploadSessions = createUploadSessionStore(config);
+  // Bytes left over from yesterday's interrupted transfer are dead weight.
+  uploadSessions.pruneStale().catch(() => {});
 
   app.use(express.json());
   app.use(cookieParser());
@@ -256,6 +262,8 @@ function createApp(config) {
       maxUploadBytes: config.maxUploadBytes,
       maxUploadMb: config.maxUploadMb,
       maxFilesPerUpload: MAX_FILES_PER_UPLOAD,
+      uploadChunkBytes: config.uploadChunkBytes,
+      uploadChunkMb: config.uploadChunkMb,
     });
   });
 
@@ -292,6 +300,7 @@ function createApp(config) {
     fileService,
     publicStore,
     thumbnailService,
+    { config, uploadSessions },
   );
   app.use("/api/files", requireAuth, fileRoutes);
 
